@@ -111,3 +111,6 @@ git push -u origin main
 前端是纯静态站点，可一键托管到 **Hugging Face Spaces / Render / Railway** 拿到公开网址。
 详见 [DEPLOY.md](./DEPLOY.md)（含三平台分步指引与 Dockerfile / render.yaml / railway.json 用法）。
 
+- 🌐 **在线演示（已部署）**：https://0a4bc34f3155463184868b207d1f4d03.sg.agentos-app.run
+  （演示账号 **admin / admin123**，无需任何配置即可体验完整功能）
+
