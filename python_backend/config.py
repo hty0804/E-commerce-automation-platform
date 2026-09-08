@@ -4,6 +4,43 @@
 """
 import os
 
+_HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def _int(name: str, default: int) -> int:
+    """
+    安全地读整数环境变量。
+
+    以前直接写 int(os.getenv("X", "60")):环境变量一旦填成 "60 " 或 "abc",
+    会在 **import 阶段** 就抛 ValueError —— 整个进程起不来,
+    crontab 里表现为静默失败(日志里只有一行 ImportError,没有任何告警)。
+    这里解析失败就退回默认值并打日志,宁可参数不对也不要整个监控挂掉。
+    """
+    raw = os.getenv(name)
+    if raw is None or str(raw).strip() == "":
+        return default
+    try:
+        return int(str(raw).strip())
+    except ValueError:
+        print(f"[config] 警告: {name}={raw!r} 不是合法整数,已回退为默认值 {default}")
+        return default
+
+
+def _float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or str(raw).strip() == "":
+        return default
+    try:
+        return float(str(raw).strip())
+    except ValueError:
+        print(f"[config] 警告: {name}={raw!r} 不是合法数值,已回退为默认值 {default}")
+        return default
+
+
+def _bool(name: str, default: bool = False) -> bool:
+    return os.getenv(name, str(default)).strip().lower() in ("1", "true", "yes", "on")
+
+
 # ------------------ 亚马逊 SP-API ------------------
 # 参考: https://developer-docs.amazon.com/sp-api/
 AMAZON_REFRESH_TOKEN = os.getenv("AMAZON_REFRESH_TOKEN")
@@ -29,10 +66,18 @@ DINGTALK_WEBHOOK_URL = os.getenv("DINGTALK_WEBHOOK_URL")  # 钉钉群机器人 w
 DINGTALK_SECRET = os.getenv("DINGTALK_SECRET")          # 钉钉机器人「加签」密钥(如果开启了加签)
 
 # ------------------ 异常检测阈值(可按需调整) ------------------
-INVENTORY_DROP_THRESHOLD = 0.3    # 库存较上次下降超过 30% 视为异常
-ORDER_COUNT_DROP_THRESHOLD = 0.5  # 每小时订单量较上次下降超过 50% 视为异常
+INVENTORY_DROP_THRESHOLD = _float("INVENTORY_DROP_THRESHOLD", 0.3)   # 库存较上次下降超过 30% 视为异常
+ORDER_COUNT_DROP_THRESHOLD = _float("ORDER_COUNT_DROP_THRESHOLD", 0.5)  # 每小时订单量下降超过 50% 视为异常
 
-STATE_FILE = os.getenv("STATE_FILE", "state.json")  # 保存上一次监控数据,用于环比对比
+# 订单量的**绝对量下限**:基线低于这个量不做环比。
+# 否则"1 单 → 0 单"就是 -100%,夜间/淡季低流量时段必然误报,
+# 报多了人就不看告警了 —— 误报比漏报更伤系统。建议设为日均单小时的 20%~30%。
+ORDER_MIN_PREVIOUS = _float("ORDER_MIN_PREVIOUS", 5)
+
+# ------------------ 状态文件 ------------------
+# 用绝对路径:以前是相对路径 "state.json",实际落在哪取决于 crontab 的 CWD,
+# crontab 里少写一个 cd 就会在别处生成新文件,表现为"每次都是首次运行、永远不告警"。
+STATE_FILE = os.getenv("STATE_FILE") or os.path.join(_HERE, "state.json")
 
 # ------------------ 大模型建议(可选,默认关闭) ------------------
 # 不配置 LLM_API_KEY 时完全不发起任何请求,告警照常发送(用内置规则建议)。
@@ -42,28 +87,43 @@ LLM_API_KEY = os.getenv("LLM_API_KEY")
 # 任何 OpenAI 兼容接口都可以(DeepSeek / 通义 / Moonshot / OpenAI 等)
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.deepseek.com/v1")
 LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-chat")
-LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "20"))       # 超时秒数,超时自动降级到规则建议
-LLM_COOLDOWN_MIN = int(os.getenv("LLM_COOLDOWN_MIN", "60"))  # 同类异常多久内不重复调用
-LLM_MAX_INCIDENTS = int(os.getenv("LLM_MAX_INCIDENTS", "20"))  # 单次最多送多少条异常
+LLM_TIMEOUT = _int("LLM_TIMEOUT", 20)            # 超时秒数,超时自动降级到规则建议
+LLM_COOLDOWN_MIN = _int("LLM_COOLDOWN_MIN", 60)  # 同类异常多久内不重复调用
+LLM_MAX_INCIDENTS = _int("LLM_MAX_INCIDENTS", 20)  # 单次最多送多少条异常
 
 # ------------------ Listing 生成(可选,复用上面的大模型配置) ------------------
 # 这是整套方案里性价比最高的大模型场景:把中文商品信息转成可直接上架的英文 Listing。
 # 不配 LLM_API_KEY 时用规则模板出草稿,流程照样跑得通。
 LISTING_BRAND = os.getenv("LISTING_BRAND", "")  # 默认品牌名,留空则用商品自带的 brand
 # 生成后是否直接调用平台上架接口。默认 False —— 生成是低成本可逆的,上架不是,先过一遍人眼。
-LISTING_AUTO_PUBLISH = os.getenv("LISTING_AUTO_PUBLISH", "false").lower() in ("1", "true", "yes")
+LISTING_AUTO_PUBLISH = _bool("LISTING_AUTO_PUBLISH")
 # 校验有 error 级问题时跳过上架(超长、违规词、必填属性缺失)。强烈建议保持 True。
-LISTING_SKIP_ON_ERROR = os.getenv("LISTING_SKIP_ON_ERROR", "true").lower() in ("1", "true", "yes")
+LISTING_SKIP_ON_ERROR = _bool("LISTING_SKIP_ON_ERROR", True)
 
 # ------------------ 调度 ------------------
-MONITOR_INTERVAL_MIN = int(os.getenv("MONITOR_INTERVAL_MIN", "60"))  # 监控调度间隔(分钟),需与 crontab 一致
+MONITOR_INTERVAL_MIN = _int("MONITOR_INTERVAL_MIN", 60)  # 监控调度间隔(分钟),需与 crontab 一致
 
 # ------------------ 大数据量抓取策略(见 README「容量与性能」) ------------------
 # 全量扫描的间隔(小时)。SKU 多时不必每小时全量:日常走增量,每隔 N 小时做一次全量对账。
-INVENTORY_FULL_SCAN_HOURS = float(os.getenv("INVENTORY_FULL_SCAN_HOURS", "6"))
+INVENTORY_FULL_SCAN_HOURS = _float("INVENTORY_FULL_SCAN_HOURS", 6)
 # 增量拉取的回看冗余(分钟)。官方按"变更时间"返回,留冗余防止时钟偏差/写入延迟导致漏数据。
-INVENTORY_LOOKBACK_MINUTES = int(os.getenv("INVENTORY_LOOKBACK_MINUTES", "90"))
+INVENTORY_LOOKBACK_MINUTES = _int("INVENTORY_LOOKBACK_MINUTES", 90)
 # 翻页上限,防止接口异常时无限循环。
-INVENTORY_MAX_PAGES = int(os.getenv("INVENTORY_MAX_PAGES", "2000"))
+INVENTORY_MAX_PAGES = _int("INVENTORY_MAX_PAGES", 2000)
 # 重点 SKU(逗号分隔):爆款、易断货的品,每轮都单独查一次,不受增量窗口影响。
 FOCUS_SKUS = [s.strip() for s in os.getenv("FOCUS_SKUS", "").split(",") if s.strip()]
+
+# ------------------ 网络与重试 ------------------
+# 单次退避等待的上限(秒)。服务端返回的 Retry-After 不设上限时可能给 3600,
+# 照睡会把整个调度窗口吃掉,后面几轮全部积压。
+MAX_RETRY_WAIT = _int("MAX_RETRY_WAIT", 60)
+# 拼多多翻页间隔(秒)。避免连续翻页触发限流。
+PDD_PAGE_INTERVAL = _float("PDD_PAGE_INTERVAL", 0.6)
+
+# ------------------ 告警去重 ------------------
+# 同一类告警在冷却期内只发一次(分钟),0 表示不去重。
+# 慢性问题(如任务长期超时)每轮都发会刷屏,刷到最后就没人看告警了。
+ALERT_DEDUPE_MIN = _int("ALERT_DEDUPE_MIN", 60)
+
+# ------------------ 日志 ------------------
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()

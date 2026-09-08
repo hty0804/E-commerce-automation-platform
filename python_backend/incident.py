@@ -156,7 +156,17 @@ def classify_by_message(message: str) -> Optional[str]:
         return "listing_failed"
     if any(k in m for k in ("未获取到任何", "数据缺失", "empty", "no data")):
         return "data_missing"
-    if any(k in m for k in ("500", "502", "503", "504", "timeout", "超时", "接口调用失败")):
+    # 网络层异常是抓取失败里**最常见**的一类(连接被重置、DNS 失败、返回非 JSON),
+    # 必须认出来。以前只认 "500/timeout" 这几个词,结果 Connection aborted、
+    # Expecting value 这类真实高频错误全部掉进 unknown,
+    # 而 unknown 的建议只有一句"人工核对日志",等于分类体系在最需要的地方失效了。
+    if any(k in m for k in (
+        "500", "502", "503", "504", "timeout", "超时", "接口调用失败",
+        "connection", "connectionerror", "connection aborted", "reset by peer",
+        "timed out", "name resolution", "ssl", "max retries", "proxyerror",
+        "expecting value", "not valid json", "json", "解析",
+        "抓取失败", "请求失败", "网络",
+    )):
         return "api_error"
     return None
 
@@ -172,6 +182,12 @@ def classify(incident: Dict) -> str:
     key = incident.get("key", "")
     value = incident.get("value")
     ratio = incident.get("change_ratio") or 0
+
+    # 兜底:key 为 monitor 的条目是"本轮抓取/监控失败"这类事件,
+    # 无论具体报什么错,它本质上都是接口类故障。以前落到 unknown,
+    # 而 unknown 只有"人工核对日志"一条建议,等于把最该被处理的故障归成了哑类。
+    if key == "monitor":
+        return "api_error"
 
     if key.startswith("inventory:") or key.startswith("stock:"):
         if value == 0:
@@ -243,32 +259,47 @@ def llm_available() -> bool:
     return bool(getattr(config, "LLM_ENABLED", False) and getattr(config, "LLM_API_KEY", ""))
 
 
-def _load_state() -> dict:
+def _state_update():
+    """
+    统一走 anomaly_detector.state_update():加锁 → 读 → 改 → 写回。
+
+    以前这里直接调 _load_state()/_save_state(),绕过了文件锁,
+    等于同一个 state.json 有"加锁"和"不锁"两条写入路径 ——
+    并发保护只在其中一条上生效,等于没有。
+    """
     import anomaly_detector
-    return anomaly_detector._load_state()
+    return anomaly_detector.state_update()
 
 
-def _save_state(state: dict) -> None:
-    import anomaly_detector
-    anomaly_detector._save_state(state)
+def _cooldown_key(category: str, platform: str) -> str:
+    return f"_llm:{platform}:{category}"
 
 
-def _in_cooldown(category: str, platform: str) -> bool:
-    """同类异常在冷却期内不重复调用,避免烧钱"""
-    state = _load_state()
-    last = state.get(f"_llm:{platform}:{category}")
-    if not last:
-        return False
-    try:
-        return (time.time() - float(last)) < getattr(config, "LLM_COOLDOWN_MIN", 60) * 60
-    except (TypeError, ValueError):
-        return False
+def _filter_cooldown(pending: List[Dict]) -> List[Dict]:
+    """
+    在**一把锁内**完成「读冷却位点 → 筛出可调用 → 写入新位点」。
 
+    拆成"先 load 判断、再 save 标记"两步各加一把锁是没用的:
+    两个进程可能都读到"未冷却",然后都去调大模型,冷却形同虚设。
+    """
+    cooldown_sec = getattr(config, "LLM_COOLDOWN_MIN", 60) * 60
+    now = time.time()
+    keep = []
 
-def _mark_called(category: str, platform: str) -> None:
-    state = _load_state()
-    state[f"_llm:{platform}:{category}"] = str(time.time())
-    _save_state(state)
+    with _state_update() as state:
+        for inc in pending:
+            key = _cooldown_key(inc["category"], inc.get("platform", "all"))
+            last = state.get(key)
+            if last:
+                try:
+                    if now - float(last) < cooldown_sec:
+                        continue
+                except (TypeError, ValueError):
+                    pass
+            state[key] = str(now)
+            keep.append(inc)
+
+    return keep
 
 
 def llm_advice(incidents: List[Dict]) -> Optional[str]:
@@ -279,7 +310,7 @@ def llm_advice(incidents: List[Dict]) -> Optional[str]:
     if not llm_available() or not incidents:
         return None
 
-    pending = [i for i in incidents if not _in_cooldown(i["category"], i.get("platform", "all"))]
+    pending = _filter_cooldown(incidents)
     if not pending:
         log.info("所有异常类型都在 LLM 冷却期内,跳过调用")
         return None
@@ -322,9 +353,8 @@ def llm_advice(incidents: List[Dict]) -> Optional[str]:
         )
         resp.raise_for_status()
         content = resp.json()["choices"][0]["message"]["content"].strip()
-
-        for i in pending:
-            _mark_called(i["category"], i.get("platform", "all"))
+        # 冷却位点在 _filter_cooldown 里已经写过了:
+        # 放在调用成功后才写的话,调用失败/超时的那些轮次会反复重试,冷却就没意义了。
         return content
 
     except Exception as e:

@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  frontend:
+    name: 前端冒烟测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install
+      - run: npm test
+
+  backend:
+    name: Python 回归测试
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      # 测试用桩模块替换 requests / botocore,不需要装任何第三方依赖,
+      # 因此这里不 pip install —— 也顺便保证"不装依赖也能跑测试"这件事不被破坏。
+      - name: 编译检查
+        run: python -m compileall -q python_backend
+      - name: 回归测试
+        run: python -m unittest discover -s python_backend/tests -v

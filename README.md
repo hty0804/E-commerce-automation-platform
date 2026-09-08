@@ -65,10 +65,19 @@ python_backend/         原 Python 自动化框架（SP-API / 拼多多客户端
 ```
 change_ratio = (current - previous) / previous
 direction = "drop"  → change_ratio <= -threshold 时告警（库存、订单量）
+direction = "rise"  → change_ratio >=  threshold 时告警（成本价、运费上涨）
 direction = "both"  → |change_ratio| >= threshold 时告警（价格）
 ```
 
-库存按 **SKU 维度逐项检测**，避免个别 SKU 暴跌被平台总量平均掉。
+`threshold` 是**比例**不是百分比：`0.3` 表示 30%，别写成 `30`。
+传 `drop / rise / both` 之外的值会打 warning 并回退为 `drop`，不会静默失效。
+
+三档防误报：
+
+- `current is None`（这轮没取到数）→ 不告警、也不写进基线。数据缺失 ≠ 跌到 0。
+- `previous < min_previous` → 不做环比。否则「1 单 → 0 单」就是 -100%，夜间必误报。
+- 库存按 **SKU 维度逐项检测**，避免个别 SKU 暴跌被平台总量平均掉。
+
 降幅达到阈值 2 倍判定为「严重」，否则为「警告」。
 
 ## 数据说明
@@ -103,15 +112,36 @@ direction = "both"  → |change_ratio| >= threshold 时告警（价格）
 本仓库**无需构建**：前端是纯静态文件，双击 `index.html` 即可运行。
 
 ```bash
-# 1) 前端冒烟测试（验证 9 个页面渲染 + Listing 全流程，可选）
+# 1) 前端冒烟测试（验证 9 个页面渲染 + Listing 全流程）
 npm install        # 安装 jsdom 开发依赖
 npm test          # 等价于 node smoke_test.js，应输出 PASS: 29  FAIL: 0
 
-# 2) Python 后端（接真实平台 API 时才需要）
+# 2) Python 后端回归测试（不需要装任何依赖，测试内部用桩替换 requests/botocore）
+python -m unittest discover -s python_backend/tests -v   # 34 项，覆盖历次修复的 bug
+#   或：npm run test:py      （需本机有 python 命令）
+#   跑全部：npm run test:all
+
+# 3) 接真实平台 API 时才需要
 cd python_backend
 pip install -r requirements.txt
 python main.py --help
 ```
+
+推送到 GitHub 后会自动跑 [CI](./.github/workflows/ci.yml)：三个 Python 版本编译检查 + 回归测试，
+以及前端冒烟测试。
+
+### 别漏了心跳检查
+
+监控最大的风险是**它自己挂了而你不知道** —— crontab 被覆盖、机器重启后 cron 没起来、
+进程被 OOM kill，这些情况下系统不会有任何异常，只是"安静地不再监控"。
+所以每轮监控会写心跳，另外配一条 crontab 做死信检查：
+
+```bash
+0 * * * * cd /path/to/ecommerce_monitor && /usr/bin/python3 main.py monitor >> monitor.log 2>&1
+*/30 * * * * cd /path/to/ecommerce_monitor && /usr/bin/python3 main.py health >> monitor.log 2>&1
+```
+
+`health` 发现超过 2.5 个调度周期没有成功运行就告警（退出码 1）。
 
 ## 上传到 GitHub
 

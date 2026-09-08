@@ -4,7 +4,9 @@
   "description": "电商 SOP 自动化控制台：亚马逊 SP-API + 拼多多开放平台的自动上架 / 每小时监控 / 异常告警后台（纯静态前端 + Python 后端）。",
   "private": true,
   "scripts": {
-    "test": "node smoke_test.js"
+    "test": "node smoke_test.js",
+    "test:py": "python -m unittest discover -s python_backend/tests -v",
+    "test:all": "npm test && npm run test:py"
   },
   "devDependencies": {
     "jsdom": "^24.0.0"

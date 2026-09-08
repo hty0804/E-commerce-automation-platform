@@ -38,6 +38,23 @@ RATE_INVENTORY = 2.0      # getInventorySummaries: rate 2, burst 2
 RATE_ORDERS = 0.0167      # getOrders: rate 0.0167(约 1 次/分钟), burst 20
 
 
+class PagedResult(list):
+    """
+    带「数据是否完整」标记的列表。
+
+    为什么需要它:翻页到 max_pages 上限时,函数只能返回已拿到的部分数据。
+    以前调用方无从判断,拿到残缺数据照样把同步游标往前推,
+    结果下一轮增量从"现在"开始,没拉到的那批 SKU 就**永久**不再被增量覆盖 ——
+    不报错、不告警,只是静默地少监控一批货。
+
+    list 子类保证老调用方(直接 for / len)不受影响,需要判断时看 .complete。
+    """
+
+    def __init__(self, items, complete: bool = True):
+        super().__init__(items)
+        self.complete = complete
+
+
 class AmazonSPAPIClient:
     def __init__(self):
         self._access_token = None
@@ -110,14 +127,20 @@ class AmazonSPAPIClient:
 
             if resp.status_code == 429:
                 wait = resp.headers.get("Retry-After")
-                wait = float(wait) if wait else min(2 ** attempt, 60)
+                # Retry-After 由服务端给,理论上可能是 3600(1 小时)。
+                # 直接照睡会吃掉整个调度窗口,后面的轮次全部积压,所以必须封顶。
+                try:
+                    wait = float(wait) if wait else min(2 ** attempt, config.MAX_RETRY_WAIT)
+                except (TypeError, ValueError):
+                    wait = min(2 ** attempt, config.MAX_RETRY_WAIT)
+                wait = min(wait, config.MAX_RETRY_WAIT)
                 log.warning("触发限流(429),等待 %.1fs 后重试 (%d/%d)", wait, attempt + 1, max_retries)
                 time.sleep(wait)
                 last_exc = RuntimeError(f"429 Too Many Requests: {path}")
                 continue
 
             if 500 <= resp.status_code < 600:
-                wait = min(2 ** attempt, 60)
+                wait = min(2 ** attempt, config.MAX_RETRY_WAIT)
                 log.warning("服务端错误(%d),等待 %.1fs 后重试", resp.status_code, wait)
                 time.sleep(wait)
                 last_exc = RuntimeError(f"{resp.status_code} from {path}")
@@ -155,7 +178,9 @@ class AmazonSPAPIClient:
                                注意:传 startDateTime 时 sellerSkus / sellerSku 参数会被忽略。
         :param seller_skus:    只查指定 SKU(单次最多 50 个),用于重点 SKU 高频监控。
         :param max_pages:      翻页上限,防止异常情况下无限循环。
-        :return: list[dict],每个元素是一个 SKU 的库存摘要。
+        :return: PagedResult(list[dict]),每个元素是一个 SKU 的库存摘要;
+                 .complete 为 False 表示被 max_pages 截断,数据不完整,
+                 调用方**不要**据此推进同步游标。
         """
         path = "/fba/inventory/v1/summaries"
         base_params = {
@@ -186,8 +211,13 @@ class AmazonSPAPIClient:
             self._pace(RATE_INVENTORY)  # 翻页之间按 2 req/s 节流
 
         if pages >= max_pages:
-            log.warning("库存翻页达到上限 %d 页,可能存在未拉取完的数据", max_pages)
-        return summaries
+            log.error(
+                "库存翻页达到上限 %d 页,数据不完整 —— 本轮不要推进同步游标,"
+                "否则未拉取到的 SKU 会被后续增量永久跳过。请调大 INVENTORY_MAX_PAGES 或改用 Reports API。",
+                max_pages,
+            )
+            return PagedResult(summaries, complete=False)
+        return PagedResult(summaries, complete=True)
 
     # ---------------- 监控订单(分页 + 限流) ----------------
     def get_recent_orders(self, created_after_iso: str, max_pages: int = 20) -> list:

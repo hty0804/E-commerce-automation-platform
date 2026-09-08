@@ -49,22 +49,76 @@ class PinduoduoClient:
         )
         return hashlib.md5(raw.encode("utf-8")).hexdigest().upper()
 
-    def _call(self, api_type: str, biz_params: dict) -> dict:
-        params = self._flatten({
-            "client_id": config.PDD_CLIENT_ID,
-            "access_token": config.PDD_ACCESS_TOKEN,
-            "timestamp": str(int(time.time())),
-            "data_type": "JSON",
-            "type": api_type,
-            **biz_params,
-        })
-        params["sign"] = self._sign(params)
-        resp = requests.post(self.endpoint, data=params, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
-        if "error_response" in data:
-            raise RuntimeError(f"拼多多 API 返回错误: {data['error_response']}")
-        return data
+    def _call(self, api_type: str, biz_params: dict, max_retries: int = 3) -> dict:
+        """
+        发起一次调用。网络抖动 / 5xx 会重试,业务错误(error_response)不重试 ——
+        重试业务错误只会重复触发同样的失败,还可能在写入类接口上造成重复建商品。
+        """
+        last_exc = None
+        for attempt in range(max_retries):
+            params = self._flatten({
+                "client_id": config.PDD_CLIENT_ID,
+                "access_token": config.PDD_ACCESS_TOKEN,
+                "timestamp": str(int(time.time())),
+                "data_type": "JSON",
+                "type": api_type,
+                **biz_params,
+            })
+            params["sign"] = self._sign(params)
+
+            try:
+                resp = requests.post(self.endpoint, data=params, timeout=15)
+            except Exception as exc:  # 网络层异常:可重试
+                last_exc = exc
+                if attempt == max_retries - 1:
+                    raise RuntimeError(f"拼多多接口网络异常({api_type}): {exc}") from exc
+                time.sleep(min(2 ** attempt, config.MAX_RETRY_WAIT))
+                continue
+
+            if 500 <= resp.status_code < 600:
+                last_exc = RuntimeError(f"拼多多服务端错误 {resp.status_code}({api_type})")
+                if attempt == max_retries - 1:
+                    raise last_exc
+                time.sleep(min(2 ** attempt, config.MAX_RETRY_WAIT))
+                continue
+
+            resp.raise_for_status()
+
+            try:
+                data = resp.json()
+            except ValueError as exc:
+                # 网关偶尔返回 HTML 错误页,直接 json() 会抛一堆看不懂的解析错误,
+                # 这里换成能定位问题的说法。
+                raise RuntimeError(
+                    f"拼多多返回内容不是合法 JSON({api_type}),通常是网关限流页或鉴权跳转: "
+                    f"{resp.text[:200]}"
+                ) from exc
+
+            if "error_response" in data:
+                raise RuntimeError(self._explain_error(api_type, data["error_response"]))
+            return data
+
+        raise last_exc or RuntimeError(f"拼多多调用失败: {api_type}")
+
+    @staticmethod
+    def _explain_error(api_type: str, err) -> str:
+        """
+        把业务错误翻译成能直接行动的话。
+
+        尤其是 access_token 过期:拼多多的 token 有有效期,过期后所有接口都会报同一个错,
+        如果不点明,排查时很容易误判成"接口挂了"或"签名写错了"。
+        """
+        text = str(err)
+        lower = text.lower()
+        if any(k in lower for k in ("token", "access_token", "授权", "authorize")) and any(
+            k in lower for k in ("invalid", "expire", "过期", "失效", "错误", "error")
+        ):
+            return (
+                f"拼多多 access_token 已失效或过期({api_type}):{text}。"
+                "请重新走商家授权流程获取新 token 并更新 PDD_ACCESS_TOKEN —— "
+                "这不是代码问题,token 过期后所有接口都会报同样的错。"
+            )
+        return f"拼多多 API 返回错误({api_type}): {text}"
 
     # ---------- 自动上架 / 更新商品 ----------
     def add_goods(self, goods_payload: dict) -> dict:
@@ -83,11 +137,23 @@ class PinduoduoClient:
     def iter_goods_list(self, page_size: int = 100, max_pages: int = 500) -> list:
         """
         自动翻页拉取全部商品,避免只拿到第一页导致后面的商品从未被监控。
+
+        两点加固:
+        1. 翻页之间加间隔 —— 原来是一口气连续请求,量大时容易触发网关限流。
+        2. 某一页失败不再整轮中断 —— 保留已拿到的部分并抛出带上下文的异常,
+           由上层决定是告警还是降级,而不是"一个商品拉不到 → 整个平台本轮无数据"。
+
         返回 goods_list 合并后的数组。
         """
         goods, page = [], 1
         while page <= max_pages:
-            data = self.get_goods_list(page=page, page_size=page_size)
+            try:
+                data = self.get_goods_list(page=page, page_size=page_size)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"拼多多商品列表第 {page} 页拉取失败(已拿到 {len(goods)} 个商品): {exc}"
+                ) from exc
+
             resp = data.get("goods_list_get_response") or {}
             batch = resp.get("goods_list") or []
             goods.extend(batch)
@@ -99,7 +165,10 @@ class PinduoduoClient:
             )
             if not has_more or not batch:
                 break
+
             page += 1
+            if config.PDD_PAGE_INTERVAL > 0:
+                time.sleep(config.PDD_PAGE_INTERVAL)
 
         return goods
 

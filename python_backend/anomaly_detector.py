@@ -20,11 +20,14 @@
 """
 import contextlib
 import json
+import logging
 import os
 import time
 from typing import Dict, List, Optional
 
 import config
+
+log = logging.getLogger(__name__)
 
 try:  # POSIX
     import fcntl
@@ -79,6 +82,25 @@ def state_lock(timeout: float = 30.0):
         fh.close()
 
 
+@contextlib.contextmanager
+def state_update():
+    """
+    「加锁 → 读 → 交出 state 供修改 → 自动写回」的统一入口。
+
+    给需要读-改-写的调用方用(比如 incident.py 的 LLM 冷却位点)。
+    之前 incident.py 直接调 _load_state()/_save_state(),绕过了锁,
+    导致同一个文件有加锁和不加锁两条写入路径,并发保护形同虚设。
+
+    用法:
+        with state_update() as state:
+            state["_llm:amazon:stockout"] = str(time.time())
+    """
+    with state_lock():
+        state = _load_state()
+        yield state
+        _save_state(state)
+
+
 def _load_state() -> dict:
     if os.path.exists(config.STATE_FILE):
         with open(config.STATE_FILE, "r", encoding="utf-8") as f:
@@ -100,17 +122,49 @@ def _save_state(state: dict) -> None:
 
 
 def _compare(platform: str, key: str, current_value: float, previous: Optional[float],
-             threshold: float, direction: str = "drop") -> Dict:
-    """纯函数:只做比较,不碰文件。"""
+             threshold: float, direction: str = "drop", min_previous: float = 0.0) -> Dict:
+    """
+    纯函数:只做比较,不碰文件。
+
+    :param threshold: 变动比例(0.3 = 30%),不是百分比数字,别传 30。
+    :param direction: "drop" 只看下跌 / "rise" 只看上涨 / "both" 双向。
+    :param min_previous: 基线的绝对量下限。低于这个量不做环比 —— 否则"1 单 → 0 单"
+                         就是 -100%,夜间低流量时段必然误报。
+
+    关于 None:
+        current_value 为 None 表示**这次没取到数**,不是"取到 0"。
+        两者必须区分:0 是真实断货要告警,None 是数据缺失,当成 0 会制造假断货告警。
+        以前这里直接做 `current_value - previous`,None 会抛 TypeError,
+        把整个监控进程打挂(且 collect_incidents 在 try 之外,一条告警都发不出去)。
+
+    关于 direction:
+        以前只有 drop / both 两个分支,传 "rise" 会被静默吞掉 —— 不报错、也不告警,
+        调用方以为配了涨价检测,实际上什么都不会发生。现在补齐,并对非法值显式告警。
+    """
     result = {"anomaly": False, "message": ""}
 
-    if previous is not None and previous > 0:
+    if current_value is None:
+        # 数据缺失,不是指标下降:不告警,也不参与本轮比较
+        return result
+
+    if direction not in ("drop", "rise", "both"):
+        log.warning("未知的 direction=%r(platform=%s key=%s),已按 drop 处理。"
+                    "合法值: drop / rise / both", direction, platform, key)
+        direction = "drop"
+
+    if previous is not None and previous > 0 and previous >= min_previous:
         change_ratio = (current_value - previous) / previous
         if direction == "drop" and change_ratio <= -threshold:
             result["anomaly"] = True
             result["message"] = (
                 f"[{platform}] {key} 从 {previous} 降至 {current_value}"
                 f"(降幅 {abs(change_ratio) * 100:.1f}%,超过阈值 {threshold * 100:.0f}%)"
+            )
+        elif direction == "rise" and change_ratio >= threshold:
+            result["anomaly"] = True
+            result["message"] = (
+                f"[{platform}] {key} 从 {previous} 涨至 {current_value}"
+                f"(涨幅 {change_ratio * 100:.1f}%,超过阈值 {threshold * 100:.0f}%)"
             )
         elif direction == "both" and abs(change_ratio) >= threshold:
             result["anomaly"] = True
@@ -159,6 +213,7 @@ def collect_incidents(checks: List[Dict]) -> List[Dict]:
             r = _compare(
                 c["platform"], c["key"], value, previous,
                 c["threshold"], c.get("direction", "drop"),
+                c.get("min_previous", 0.0),
             )
             if r["anomaly"]:
                 ratio = (value - previous) / previous if previous else None
@@ -172,7 +227,10 @@ def collect_incidents(checks: List[Dict]) -> List[Dict]:
                     "direction": c.get("direction", "drop"),
                     "message": r["message"],
                 })
-            state[state_key] = value
+            # value 为 None 表示本轮没取到数,不能写进状态:
+            # 否则会把上一轮的真实基线冲掉,下一轮永远比不出变化。
+            if value is not None:
+                state[state_key] = value
 
         _save_state(state)
     return incidents
