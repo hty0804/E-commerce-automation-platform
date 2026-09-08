@@ -1,0 +1,12 @@
+# Render 部署配置（Static Site，无需构建）
+# 用法：Render 新建 Static Site → 关联本 GitHub 仓库 → 选此 Blueprint 或手动填
+#   Build Command: （留空）
+#   Publish directory: .
+services:
+  - type: web
+    name: ecommerce-sop-admin
+    runtime: static
+    buildCommand: ""
+    staticPublishPath: "."
+    pullRequestPreviewsEnabled: false
+    # 纯静态站点，无需环境变量；如需真实 API 模式，请把 python_backend 单独部署为服务

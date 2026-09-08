@@ -106,3 +106,8 @@ git push -u origin main
 > `__pycache__/`、`.env`、`listing_payloads.json`（运行产物）等，不会误传无关文件。
 > 首次提交前请检查 `package.json` 里的 `repository.url` 与 LICENSE 的版权方是否需替换。
 
+## 部署到线上
+
+前端是纯静态站点，可一键托管到 **Hugging Face Spaces / Render / Railway** 拿到公开网址。
+详见 [DEPLOY.md](./DEPLOY.md)（含三平台分步指引与 Dockerfile / render.yaml / railway.json 用法）。
+

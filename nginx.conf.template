@@ -1,0 +1,21 @@
+server {
+    listen       ${PORT};
+    server_name  _;
+
+    root   /usr/share/nginx/html;
+    index  index.html;
+
+    # SPA 单页应用：所有未命中静态资源的路径都回退到 index.html
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # 静态资源缓存
+    location ~* \.(css|js|png|jpg|jpeg|gif|svg|ico|woff2?)$ {
+        expires 7d;
+        add_header Cache-Control "public, max-age=604800";
+    }
+
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml;
+}
