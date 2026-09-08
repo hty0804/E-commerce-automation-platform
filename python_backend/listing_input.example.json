@@ -1,0 +1,41 @@
+[
+  {
+    "sku": "AMZ-1001",
+    "name": "无线蓝牙耳机 主动降噪 超长续航 防水",
+    "brand": "SoundCore",
+    "category": "3C数码",
+    "features": "主动降噪，深度 35dB；单次续航 8 小时，配充电盒共 32 小时；IPX5 防水；Type-C 快充",
+    "specs": {
+      "color": "Black",
+      "battery_capacity": "400mAh",
+      "connectivity_technology": "Bluetooth 5.3",
+      "power_source": "Battery Powered"
+    },
+    "keywords": "wireless earbuds, noise cancelling earbuds, bluetooth headphones",
+    "audience": "通勤 / 出差人群",
+    "price": 39.9
+  },
+  {
+    "sku": "AMZ-1002",
+    "name": "加厚不锈钢保温杯 大容量 便携",
+    "brand": "HydroPeak",
+    "category": "家居厨房",
+    "features": "316 不锈钢内胆；保温 12 小时 / 保冷 24 小时；一键弹盖，单手可开；车载杯架通用",
+    "specs": {
+      "color": "Navy Blue",
+      "capacity": "750ml",
+      "material": "Stainless Steel"
+    },
+    "keywords": "insulated tumbler, stainless steel water bottle",
+    "price": 24.9
+  },
+  {
+    "sku": "PDD-2001",
+    "name": "护眼台灯 三档调光 USB充电",
+    "brand": "光明家",
+    "category": "家居厨房",
+    "features": "无频闪护眼；三档色温可调；USB 充电，充满可用 20 小时；折叠便携",
+    "specs": { "material": "ABS", "wattage": "5W" },
+    "price": 59
+  }
+]

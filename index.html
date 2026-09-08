@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>电商 SOP 自动化控制台</title>
+<link rel="stylesheet" href="assets/css/style.css" />
+</head>
+<body>
+
+<!-- ============ 登录页 ============ -->
+<div class="login-screen" id="loginScreen">
+  <div class="login-card">
+    <div class="login-brand">
+      <div>
+        <h1>电商 SOP 自动化控制台</h1>
+        <p>亚马逊 SP-API · 拼多多开放平台<br />自动上架 · 每小时监控 · 异常告警</p>
+        <ul class="brand-feats">
+          <li><span class="ic">▲</span><span>商品批量上架 / 更新，双平台统一入口</span></li>
+          <li><span class="ic">◆</span><span>每小时轮询库存与订单，环比阈值异常检测</span></li>
+          <li><span class="ic">●</span><span>企业微信 / 钉钉群机器人秒级告警推送</span></li>
+          <li><span class="ic">■</span><span>全程可视化，规则与阈值后台即可调整</span></li>
+        </ul>
+      </div>
+      <div class="brand-foot">无需配置 API 密钥即可进入演示模式体验完整流程</div>
+    </div>
+
+    <div class="login-form">
+      <h2>欢迎回来</h2>
+      <p class="sub">登录后进入控制台管理你的自动化任务</p>
+
+      <div class="demo-tip">
+        <b>演示账号：</b>admin / admin123<br />
+        <b>演示模式：</b>数据由内置模拟引擎生成，不调用任何真实接口
+      </div>
+
+      <form id="loginForm" autocomplete="off">
+        <div class="field">
+          <label for="username">账号 <span class="req">*</span></label>
+          <input class="input" id="username" placeholder="请输入账号" value="admin" />
+        </div>
+        <div class="field">
+          <label for="password">密码 <span class="req">*</span></label>
+          <div class="input-with-icon">
+            <input class="input" id="password" type="password" placeholder="请输入密码" value="admin123" />
+            <button type="button" class="eye" id="eyeBtn" title="显示/隐藏密码">👁</button>
+          </div>
+        </div>
+        <div class="field row-between" style="margin-bottom:20px">
+          <label class="check-line"><input type="checkbox" id="remember" checked /> 记住登录状态</label>
+          <a href="javascript:void(0)" id="forgotLink">忘记密码？</a>
+        </div>
+        <button class="btn btn-primary btn-block" type="submit" id="loginBtn">登 录</button>
+      </form>
+
+      <p class="hint" style="text-align:center;margin-top:18px">
+        首次进入会自动初始化演示数据 · 所有数据保存在浏览器本地
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 主应用 ============ -->
+<div class="app-shell hidden" id="appShell">
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-logo">
+      <span class="logo-mark">SOP</span>
+      <span>自动化控制台</span>
+    </div>
+    <nav class="nav" id="nav"></nav>
+    <div class="sidebar-foot">
+      <div id="sidebarClock" style="margin-bottom:6px"></div>
+      <div>数据存于浏览器本地 · v1.0</div>
+    </div>
+  </aside>
+
+  <div class="main-wrap">
+    <header class="header">
+      <button class="hamburger" id="hamburger">☰</button>
+      <div>
+        <div class="page-title" id="pageTitle">数据看板</div>
+        <div class="page-desc" id="pageDesc">全平台运行状态总览</div>
+      </div>
+      <div class="header-spacer"></div>
+      <div class="header-actions">
+        <span class="mode-chip" id="modeChip" title="点击切换演示/真实模式">
+          <i class="dot pulse"></i><span class="txt" id="modeChipText">演示模式</span>
+        </span>
+        <button class="btn btn-sm btn-primary" id="runNowBtn">▶ 立即监控</button>
+        <div class="avatar" id="avatarBtn" title="admin">A</div>
+      </div>
+    </header>
+    <main class="content" id="content"></main>
+  </div>
+</div>
+
+<div id="modalRoot"></div>
+<div class="toast-root" id="toastRoot"></div>
+
+<script src="assets/js/store.js"></script>
+<script src="assets/js/ui.js"></script>
+<script src="assets/js/views.js"></script>
+<script src="assets/js/app.js"></script>
+</body>
+</html>

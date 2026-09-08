@@ -1,0 +1,29 @@
+# ===== 项目管理数据（非交付物，切勿上传）=====
+.workbuddy-ai/
+
+# ===== 前端 =====
+node_modules/
+package-lock.json
+npm-debug.log*
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+
+# ===== 运行时生成的产物 =====
+.env
+.env.*
+!.env.example
+listing_payloads.json
+state.json
+*.log
+
+# ===== 系统文件 =====
+.DS_Store
+Thumbs.db
+desktop.ini

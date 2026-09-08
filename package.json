@@ -1,0 +1,17 @@
+{
+  "name": "ecommerce-sop-admin",
+  "version": "1.0.0",
+  "description": "电商 SOP 自动化控制台：亚马逊 SP-API + 拼多多开放平台的自动上架 / 每小时监控 / 异常告警后台（纯静态前端 + Python 后端）。",
+  "private": true,
+  "scripts": {
+    "test": "node smoke_test.js"
+  },
+  "devDependencies": {
+    "jsdom": "^24.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-name/ecommerce-sop-admin.git"
+  },
+  "license": "MIT"
+}
