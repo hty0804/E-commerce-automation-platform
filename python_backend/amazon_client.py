@@ -19,6 +19,7 @@
 注意: SP-API 的接口路径、限流数值会不定期调整,正式接入前请对照官方最新文档核对:
 https://developer-docs.amazon.com/sp-api/
 """
+import json
 import logging
 import time
 
@@ -72,14 +73,25 @@ class AmazonSPAPIClient:
         - 429 (Too Many Requests):按 Retry-After 退避,没有该头就指数退避
         - 5xx:指数退避
         避免一次限流就把整轮监控打断。
+
+        关于请求体: header 声明的是 application/json,所以必须把 dict **序列化成 bytes** 再传。
+        两处必须用同一份 bytes:
+        1. AWSRequest(data=...) —— SigV4 是对 body 的哈希签名,签名和实际发送的字节不一致会 403
+        2. requests.request(data=...) —— 实际发送
+        如果传原始 dict:requests 会按 form-urlencoded 编码,和签名时的哈希对不上,
+        且服务端收到表单而非 JSON,PUT/POST 会直接失败(GET 无 body,不受影响)。
         """
         last_exc = None
         for attempt in range(max_retries):
             access_token = self._get_lwa_token()
             url = f"{config.AMAZON_ENDPOINT}{path}"
 
+            body_bytes = (
+                json.dumps(body, ensure_ascii=False).encode("utf-8") if body is not None else None
+            )
+
             request = AWSRequest(
-                method=method, url=url, data=body, params=params or {},
+                method=method, url=url, data=body_bytes, params=params or {},
                 headers={
                     "x-amz-access-token": access_token,
                     "content-type": "application/json",
@@ -93,7 +105,7 @@ class AmazonSPAPIClient:
             prepared = request.prepare()
 
             resp = requests.request(
-                method, prepared.url, headers=dict(prepared.headers), data=body, timeout=30
+                method, prepared.url, headers=dict(prepared.headers), data=body_bytes, timeout=30
             )
 
             if resp.status_code == 429:

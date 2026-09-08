@@ -1,3 +1,12 @@
-requests
-botocore
-apscheduler
+# 固定大版本:只锁下限和下一个不兼容大版本的上限,避免升级时踩到破坏性变更。
+# 用 pip install -r requirements.txt 安装;建议配合 venv 使用。
+
+requests>=2.31,<3
+
+# SP-API 的 SigV4 签名依赖 botocore(只需要签名能力,不需要装完整 boto3)
+botocore>=1.34,<2
+
+# 只支持 3.x:代码用的是 BlockingScheduler / add_job 的 3.x 写法。
+# APScheduler 4.0 是破坏性升级(scheduler 启动方式、trigger 参数命名都有变化),
+# 这里显式排除,否则 pip 装到 4.x 会直接 ImportError / 启动即报错。
+apscheduler>=3.10,<4

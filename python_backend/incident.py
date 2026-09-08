@@ -404,6 +404,14 @@ def format_alert(report: Dict, header: str = "🚨 电商数据监控告警",
         f"■ 异常概览\n{report['summary']}\n\n"
         f"■ 处理建议（{src}）\n{report['final_advice']}"
     )
-    if len(text.encode("utf-8")) > max_len:
-        text = text[:max_len] + "\n…(内容过长已截断,完整建议见运行日志)"
+    # ⚠️ 必须按**字节**截断:max_len 是字节上限(企业微信 text 2048 字节),
+    # 而中文一个字占 3 字节。如果按字符切片,max_len=1800 个字符 ≈ 5400 字节,
+    # 仍然是超限的,消息照样发不出去 —— 判断和切片要用同一把尺子。
+    encoded = text.encode("utf-8")
+    if len(encoded) > max_len:
+        suffix = "\n…(内容过长已截断,完整建议见运行日志)"
+        suffix_len = len(suffix.encode("utf-8"))
+        # 给后缀留位置;从字节边界切,errors="ignore" 丢弃被切断的多字节字符
+        keep = max(max_len - suffix_len, 0)
+        text = encoded[:keep].decode("utf-8", errors="ignore") + suffix
     return text

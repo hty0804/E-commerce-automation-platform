@@ -20,7 +20,11 @@ env/
 .env.*
 !.env.example
 listing_payloads.json
+# 状态文件本身 + 它的衍生文件(锁 / 原子写临时文件 / 损坏备份)
 state.json
+state.json.lock
+state.json.tmp
+state.json.broken
 *.log
 
 # ===== 系统文件 =====

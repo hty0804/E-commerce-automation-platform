@@ -5,8 +5,16 @@
 参考: https://open.pinduoduo.com/application/document/api
 
 注意: 接口字段和签名细节可能调整,正式接入前请对照官方最新文档核对。
+
+关于嵌套参数(重要):
+    pdd.goods.add / pdd.goods.update 这类接口的 goods_commit_info 是**复合字段**,
+    官方要求传 JSON 字符串。如果直接把 dict 交给 requests 做 form 编码,
+    发出去的是 Python 的 str(dict)(单引号,不是合法 JSON),服务端解析失败;
+    而且签名必须用**序列化之后**的字符串来算,否则签名和实际发送内容不一致,
+    会直接报 "无效签名"。所以这里统一在 _call() 里先 _flatten() 再签名。
 """
 import hashlib
+import json
 import time
 
 import requests
@@ -18,7 +26,21 @@ class PinduoduoClient:
     def __init__(self):
         self.endpoint = config.PDD_API_ENDPOINT
 
+    @staticmethod
+    def _flatten(params: dict) -> dict:
+        """
+        把嵌套的 dict/list 参数序列化成 JSON 字符串,其余原样保留(丢弃 None)。
+        签名和发送必须用同一份结果,否则签名校验不过。
+        """
+        out = {}
+        for k, v in params.items():
+            if v is None:
+                continue
+            out[k] = json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list)) else v
+        return out
+
     def _sign(self, params: dict) -> str:
+        params = self._flatten(params)
         sorted_items = sorted(params.items(), key=lambda x: x[0])
         raw = (
             config.PDD_CLIENT_SECRET
@@ -28,14 +50,14 @@ class PinduoduoClient:
         return hashlib.md5(raw.encode("utf-8")).hexdigest().upper()
 
     def _call(self, api_type: str, biz_params: dict) -> dict:
-        params = {
+        params = self._flatten({
             "client_id": config.PDD_CLIENT_ID,
             "access_token": config.PDD_ACCESS_TOKEN,
             "timestamp": str(int(time.time())),
             "data_type": "JSON",
             "type": api_type,
             **biz_params,
-        }
+        })
         params["sign"] = self._sign(params)
         resp = requests.post(self.endpoint, data=params, timeout=15)
         resp.raise_for_status()
