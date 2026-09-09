@@ -119,9 +119,15 @@ list_new_products(products)
 
 ```bash
 crontab -e
-# 添加下面这行,每小时整点执行一次
-0 * * * * cd /path/to/ecommerce_monitor && /usr/bin/python3 main.py monitor >> monitor.log 2>&1
+# 下面两行都要加。注意 */10 后面的空格不能少,否则这行会被 cron 拒绝。
+0 * * * * cd /path/to/ecommerce-sop-admin/python_backend && /usr/bin/python3 main.py monitor >> monitor.log 2>&1
+*/10 * * * * cd /path/to/ecommerce-sop-admin/python_backend && /usr/bin/python3 main.py health >> monitor.log 2>&1
 ```
+
+第二行是**死信检查**:监控最大的风险是它自己挂了而你不知道 ——
+crontab 被覆盖、机器重启后 cron 没起来、进程被 OOM kill,
+这些情况下不会有任何异常,只是"安静地不再监控"。
+`health` 发现超过 2.5 个调度周期没有成功运行就告警(退出码 1)。
 
 **方式二:常驻进程(APScheduler)**
 

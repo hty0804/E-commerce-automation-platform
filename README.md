@@ -170,11 +170,35 @@ python main.py --help
 所以每轮监控会写心跳，另外配一条 crontab 做死信检查：
 
 ```bash
-0 * * * * cd /path/to/ecommerce_monitor && /usr/bin/python3 main.py monitor >> monitor.log 2>&1
-*/30 * * * * cd /path/to/ecommerce_monitor && /usr/bin/python3 main.py health >> monitor.log 2>&1
+# 每小时整点跑一次监控
+0 * * * * cd /path/to/ecommerce-sop-admin/python_backend && /usr/bin/python3 main.py monitor >> monitor.log 2>&1
+
+# 每 10 分钟做一次死信检查（注意 */10 后面必须有空格）
+*/10 * * * * cd /path/to/ecommerce-sop-admin/python_backend && /usr/bin/python3 main.py health >> monitor.log 2>&1
 ```
 
 `health` 发现超过 2.5 个调度周期没有成功运行就告警（退出码 1）。
+
+**cron 的三个坑，踩中任何一个都会"静默不执行"：**
+
+1. `*/10 * * * *` 是 5 个字段，`*/10` 和后面的 `*` 之间必须有空格。
+   写成 `*/10* * * *` 只有 4 个字段，cron 会报 `bad minute` 并拒绝这一行 ——
+   表现出来就是"明明配了，却从来没执行过"。
+2. cron 的环境里没有你的 `PATH`，`python3` 要写绝对路径（用 `which python3` 查）。
+   用 venv 就写 venv 里的那个：`/path/to/venv/bin/python`。
+3. cron 的工作目录是 `$HOME`，不是你的项目目录，所以必须 `cd` 过去 ——
+   否则会报找不到 `main.py`，或者更糟：读写到别处的 `state.json`。
+
+改完务必确认一眼：
+
+```bash
+crontab -l          # 确认两行都在、格式正确
+crontab -e          # 编辑
+tail -f monitor.log # 看是否真的在跑
+# cron 有没有真的执行，看系统日志
+grep CRON /var/log/syslog        # Debian / Ubuntu
+grep CRON /var/log/cron          # CentOS / RHEL
+```
 
 ## 上传到 GitHub
 

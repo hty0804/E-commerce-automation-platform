@@ -7,8 +7,13 @@
 3. run_hourly_monitor()          —— 抓取两个平台的关键数据,做异常检测,触发告警
 
 调度方式(二选一):
-A) 系统 crontab,每小时跑一次(推荐,简单可靠):
-   0 * * * * cd /path/to/ecommerce_monitor && /usr/bin/python3 main.py monitor >> monitor.log 2>&1
+A) 系统 crontab(推荐,简单可靠)。**两行都要加**,第二行是死信检查,
+   否则监控挂了不会有人知道:
+   0 * * * * cd /path/to/ecommerce-sop-admin/python_backend && /usr/bin/python3 main.py monitor >> monitor.log 2>&1
+   */10 * * * * cd /path/to/ecommerce-sop-admin/python_backend && /usr/bin/python3 main.py health >> monitor.log 2>&1
+
+   注意 `*/10` 与后面的 `*` 之间必须有空格;写成 `*/10*` 只有 4 个字段,
+   cron 会报 bad minute 并拒绝这一整行 —— 表现出来就是"配了但从来没执行过"。
 
 B) 用 APScheduler 常驻进程调度(如果你想让它作为一个服务一直跑着):
    pip install apscheduler
@@ -409,7 +414,14 @@ def check_health() -> int:
     死信检查:确认监控还在按时跑。
 
     用法(crontab 里和 monitor 并列加一条):
-        0 * * * * cd /path && python main.py health >> monitor.log 2>&1
+        */10 * * * * cd /path/to/ecommerce-sop-admin/python_backend && \
+            /usr/bin/python3 main.py health >> monitor.log 2>&1
+
+    为什么是 */10 而不是和 monitor 一样的整点:
+    两条都排在整点的话,health 有可能**先于** monitor 执行,读到的是上一轮的心跳,
+    于是每次都在临界点上抖动、偶尔误报。错开成每 10 分钟一次就稳了。
+    (`*/10` 与后面的 `*` 之间必须有空格,写成 `*/10*` 只有 4 个字段,
+    cron 会报 bad minute 并拒绝这一行 —— 表现是"配了却从来没跑过"。)
 
     为什么需要它:如果 monitor 进程因为任何原因不再被调用(crontab 被覆盖、
     机器重启后 cron 没起来、进程被 OOM kill),系统不会有任何异常 ——
