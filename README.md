@@ -130,6 +130,11 @@ direction = "both"  → |change_ratio| >= threshold 时告警（价格）
 | `BASELINE_MIN_SAMPLES` | `3` | 少于这个样本数就不做基线、直接放行 |
 | `BASELINE_TOLERANCE` | `1.0` | 与阈值同口径；`0.8` 更敏感，`1.2` 更保守 |
 | `HISTORY_RETENTION_DAYS` | `90` | 历史保留天数，每天凌晨那轮自动清理 |
+| `HISTORY_FOCUS_ONLY` | `false` | 只给 `FOCUS_SKUS` 存历史，省容量（见下） |
+
+大 SKU 量下可开 `HISTORY_FOCUS_ONLY` 只记重点 SKU 的历史。
+**它的降级方向是"可能多报、不会漏报"**：长尾 SKU 查不到基线就一律放行，退回纯环比 ——
+跟"为了省空间把告警吃掉"是两回事。开了却没配 `FOCUS_SKUS` 会打 WARNING。
 
 ### 四档防误报
 

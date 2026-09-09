@@ -51,6 +51,9 @@ CREATE INDEX IF NOT EXISTS idx_mh_hour   ON metric_history(platform, key, hour, 
 # 连接失败时只警告一次,别每轮刷屏
 _unavailable_logged = False
 
+# "开了只记重点 SKU 却没配 FOCUS_SKUS"也只警告一次
+_focus_warned = False
+
 # 按线程缓存的数据库连接(见 _connect 的注释:为什么必须复用)
 _thread_local = threading.local()
 
@@ -170,15 +173,47 @@ def record(platform: str, key: str, value: float, ts: Optional[float] = None) ->
     return record_many([(platform, key, value, ts)])
 
 
+def _focus_only_active() -> bool:
+    """
+    是否启用了"只给重点 SKU 存历史"。
+
+    开了开关却没配 FOCUS_SKUS 是个很容易犯的配置错误 —— 结果是一条历史都不记,
+    基线对比静默失效,而系统表面上一切正常。这里警告一次说清楚后果。
+    """
+    global _focus_warned
+    if not getattr(config, "HISTORY_FOCUS_ONLY", False):
+        return False
+    if not getattr(config, "FOCUS_SKUS", None) and not _focus_warned:
+        log.warning(
+            "HISTORY_FOCUS_ONLY=True 但没有配置 FOCUS_SKUS,结果是一条历史都不记 —— "
+            "基线对比会完全失效,行为退回纯环比(可能多报,不会漏报)。"
+            "要么配上 FOCUS_SKUS,要么关掉这个开关。")
+        _focus_warned = True
+    return True
+
+
+def _is_focus_key(key: str) -> bool:
+    """key(形如 stock:SKU123)是否属于 FOCUS_SKUS 里的重点 SKU"""
+    for sku in getattr(config, "FOCUS_SKUS", None) or []:
+        if sku and sku in key:
+            return True
+    return False
+
+
 def record_many(samples: Sequence[Tuple[str, str, float, Optional[float]]]) -> bool:
     """
     批量写历史(单事务)。
 
     :param samples: [(platform, key, value, ts|None), ...]
     """
+    focus_only = _focus_only_active()
     rows = []
     for platform, key, value, ts in samples:
         if value is None:
+            continue
+        if focus_only and not _is_focus_key(key):
+            # 长尾 SKU 不存历史。后果是它查不到基线 → 样本不足 → 一律放行,
+            # 行为退回纯环比。这是**故意**的:宁可多报,不因省空间而漏报。
             continue
         ts = time.time() if ts is None else ts
         hour = datetime.datetime.fromtimestamp(ts).hour

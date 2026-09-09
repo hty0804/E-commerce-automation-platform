@@ -217,6 +217,81 @@ class TestHistoryStore(_HistoryCase):
             self.assertEqual(history.prune(), 0)
 
 
+class TestFocusOnly(_HistoryCase):
+    """
+    只给重点 SKU 存历史(HISTORY_FOCUS_ONLY)。
+
+    省空间的代价是长尾 SKU 查不到基线,所以这里最要紧的是验证**降级方向是对的**:
+    没有基线时必须放行(退回纯环比、可能多报),绝不能反过来把告警吃掉。
+    """
+
+    def setUp(self):
+        super().setUp()
+        # _focus_warned 是模块级的"只警告一次"标志,用例之间要清掉,
+        # 否则只有第一个用例能看到警告,后面的断言会不稳定。
+        history._focus_warned = False
+
+    def test_all_recorded_when_disabled(self):
+        now = time.time()
+        with mock.patch.object(config, "HISTORY_FOCUS_ONLY", False), \
+             mock.patch.object(config, "FOCUS_SKUS", ["SKU1"]):
+            history.record_many([("amazon", "stock:SKU1", 1, now),
+                                 ("amazon", "stock:SKU2", 2, now)])
+        self.assertEqual(len(history.recent("amazon", "stock:SKU1")), 1)
+        self.assertEqual(len(history.recent("amazon", "stock:SKU2")), 1)
+
+    def test_only_focus_recorded_when_enabled(self):
+        now = time.time()
+        with mock.patch.object(config, "HISTORY_FOCUS_ONLY", True), \
+             mock.patch.object(config, "FOCUS_SKUS", ["SKU1"]):
+            history.record_many([("amazon", "stock:SKU1", 1, now),
+                                 ("amazon", "stock:SKU2", 2, now)])
+        self.assertEqual(len(history.recent("amazon", "stock:SKU1")), 1)
+        self.assertEqual(len(history.recent("amazon", "stock:SKU2")), 0,
+                         "非重点 SKU 不该存历史")
+
+    def test_enabled_without_focus_list_warns(self):
+        """
+        开了开关却没配 FOCUS_SKUS = 一条历史都不记,基线静默失效。
+        这种"配置错了但系统看起来正常"的情况必须有明确警告。
+        """
+        with mock.patch.object(config, "HISTORY_FOCUS_ONLY", True), \
+             mock.patch.object(config, "FOCUS_SKUS", []):
+            with self.assertLogs(history.log, level="WARNING") as cm:
+                history.record("amazon", "stock:SKU1", 1)
+        self.assertTrue(any("FOCUS_SKUS" in m for m in cm.output))
+        # 一条都没记下去
+        self.assertEqual(history.recent("amazon", "stock:SKU1"), [])
+
+    def test_long_tail_sku_still_alerts(self):
+        """
+        安全降级的核心:长尾 SKU 没有历史 → 样本不足 → 一律放行。
+        省了空间,但不能因此漏报 —— 这条是最要紧的断言。
+        """
+        now = time.time()
+        # 只给重点 SKU 灌历史
+        with mock.patch.object(config, "HISTORY_FOCUS_ONLY", False):
+            for i in range(1, 6):
+                history.record("amazon", "stock:SKU1", 30, ts=_same_hour_ts(i, now))
+
+        with mock.patch.object(config, "HISTORY_FOCUS_ONLY", True), \
+             mock.patch.object(config, "FOCUS_SKUS", ["SKU1"]):
+            # 重点 SKU:回到常态 30,应被基线抑制
+            self._set_state({"amazon:stock:SKU1": 80})
+            inc_focus = anomaly_detector.collect_incidents(
+                [{"platform": "amazon", "key": "stock:SKU1", "value": 30,
+                  "threshold": 0.3, "direction": "drop"}])
+            # 长尾 SKU:同样回到常态 30,但没有基线 → 必须放行
+            self._set_state({"amazon:stock:SKU2": 80})
+            inc_tail = anomaly_detector.collect_incidents(
+                [{"platform": "amazon", "key": "stock:SKU2", "value": 30,
+                  "threshold": 0.3, "direction": "drop"}])
+
+        self.assertEqual(len(inc_focus), 0, "重点 SKU 应被基线抑制")
+        self.assertEqual(len(inc_tail), 1,
+                         "长尾 SKU 没有基线,必须放行 —— 省空间不能变成漏报")
+
+
 class TestBaselineSuppression(_HistoryCase):
     """基线这道闸:该抑制的抑制,该报的一个都不能漏"""
 
