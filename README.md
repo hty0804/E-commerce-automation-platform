@@ -129,6 +129,18 @@ direction = "both"  → |change_ratio| >= threshold 时告警（价格）
 | `BASELINE_LOOKBACK_DAYS` | `7` | 回看多少天 |
 | `BASELINE_MIN_SAMPLES` | `3` | 少于这个样本数就不做基线、直接放行 |
 | `BASELINE_TOLERANCE` | `1.0` | 与阈值同口径；`0.8` 更敏感，`1.2` 更保守 |
+| `BASELINE_MATCH_DOW` | `true` | 是否只跟"同一个星期几"比（见下） |
+
+**关于 `BASELINE_MATCH_DOW`**：跨境电商周末和工作日的订单节奏差别很大，
+拿工作日的量去衡量周末会系统性误判，所以默认只跟同一个星期几的历史比。
+
+但要注意样本量：区分星期几之后，**7 天回看里每个星期几只剩 1 条**，
+而 `BASELINE_MIN_SAMPLES` 默认是 3 —— 建议把 `BASELINE_LOOKBACK_DAYS` 提到 **28 天**左右
+（每个星期几约 4 条）。
+
+样本不够时会自动降级（同星期几 → 不挑星期几 → 放宽小时），
+不会因此失效，但也意味着**前期基线可能一直工作在较粗的口径上**。
+想确认当前用的哪一档，跑 `python main.py history baseline <platform> <key>` 看样本数。
 | `HISTORY_RETENTION_DAYS` | `90` | 历史保留天数，每天凌晨那轮自动清理 |
 | `HISTORY_FOCUS_ONLY` | `false` | 只给 `FOCUS_SKUS` 存历史，省容量（见下） |
 

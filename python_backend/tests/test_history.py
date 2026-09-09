@@ -106,7 +106,7 @@ class TestHistoryStore(_HistoryCase):
         samples = [30, 31, 29, 200, 28, 30, 32]  # 一天离群
         for i, v in enumerate(samples, start=1):
             history.record("amazon", "orders", v, ts=_same_hour_ts(i, now))
-        base, n = history.baseline("amazon", "orders", ts=now)
+        base, n = history.baseline("amazon", "orders", ts=now, match_dow=False)
         self.assertEqual(n, 7)
         self.assertEqual(base, 30, "中位数应为 30,不受那次闪购影响")
 
@@ -124,7 +124,7 @@ class TestHistoryStore(_HistoryCase):
             history.record("amazon", "orders", 30, ts=_same_hour_ts(i, now))
         history.record("amazon", "orders", 999, ts=now)  # 恰好落在本轮时刻
 
-        base, n = history.baseline("amazon", "orders", ts=now)
+        base, n = history.baseline("amazon", "orders", ts=now, match_dow=False)
         self.assertIsNone(base, "本轮时刻的样本不应参与本轮基线")
         self.assertEqual(n, config.BASELINE_MIN_SAMPLES - 1)
 
@@ -135,7 +135,7 @@ class TestHistoryStore(_HistoryCase):
             history.record("amazon", "orders", 900, ts=_same_hour_ts(i, now) - 6 * 3600)
         for i in range(1, 6):
             history.record("amazon", "orders", 30, ts=_same_hour_ts(i, now))
-        base, n = history.baseline("amazon", "orders", ts=now)
+        base, n = history.baseline("amazon", "orders", ts=now, match_dow=False)
         self.assertEqual(n, 5)
         self.assertEqual(base, 30)
 
@@ -144,7 +144,8 @@ class TestHistoryStore(_HistoryCase):
         now = time.time()
         for i in range(1, 4):
             history.record("amazon", "orders", 30, ts=_same_hour_ts(i, now) - 3600)
-        base, n = history.baseline("amazon", "orders", ts=now, hour_window=0)
+        base, n = history.baseline("amazon", "orders", ts=now,
+                                  hour_window=0, match_dow=False)
         self.assertIsNone(base, "严格同一小时时样本应为 0")
         base2, n2 = history.baseline_with_fallback("amazon", "orders", ts=now)
         self.assertEqual(base2, 30)
@@ -215,6 +216,95 @@ class TestHistoryStore(_HistoryCase):
             self.assertEqual(history.recent("amazon", "orders"), [])
             self.assertEqual(history.baseline("amazon", "orders"), (None, 0))
             self.assertEqual(history.prune(), 0)
+
+
+class TestDayOfWeek(_HistoryCase):
+    """
+    区分工作日 / 周末。
+
+    跨境电商周末和工作日的订单节奏差别很大,拿工作日的量去衡量周末会系统性误判。
+    但这里有个陷阱:区分星期几之后样本会少一大截(7 天回看里每个星期几只有 1 条),
+    所以"降级链"才是这个功能能不能真正生效的关键。
+    """
+
+    def _seed_same_weekday(self, key, values, base=None):
+        """按周铺样本:每次减 7 天,保证星期几相同、小时相同"""
+        base = time.time() if base is None else base
+        for i, v in enumerate(values, start=1):
+            history.record("amazon", key, v, ts=base - i * 7 * DAY)
+
+    def test_prefers_same_weekday(self):
+        """
+        周末的量应该跟周末比。这里工作日是 100、周末是 20,
+        在周末查询时基线必须是 20,不能是混合后的中位数。
+        """
+        now = time.time()
+        # 同星期几(减 7/14/21 天)是 20;其余日子是 100
+        self._seed_same_weekday("orders", [20, 21, 19], base=now)
+        for d in (1, 2, 3, 4, 5, 6):
+            if d % 7 == 0:
+                continue
+            history.record("amazon", "orders", 100, ts=now - d * DAY)
+
+        base, n = history.baseline("amazon", "orders", ts=now,
+                                   lookback_days=28, match_dow=True)
+        self.assertEqual(n, 3)
+        self.assertEqual(base, 20, "同星期几的样本才该进基线")
+
+    def test_falls_back_when_same_weekday_samples_insufficient(self):
+        """
+        降级链(最关键的一条):同星期几样本不够时,必须退到"不挑星期几"
+        把基线算出来,而不是直接放弃。
+
+        如果少了这一层,7 天回看 + min_samples=3 的组合下基线永远凑不够,
+        表现就是"开关开了但告警一条没少",而你以为已经降噪了 —— 最坑人的一种失效。
+        """
+        now = time.time()
+        for d in (1, 2, 3, 4):  # 都是不同星期几
+            history.record("amazon", "orders", 50, ts=now - d * DAY)
+
+        # 严格同星期几:样本 0,算不出
+        strict, n_strict = history.baseline("amazon", "orders", ts=now,
+                                            match_dow=True)
+        self.assertIsNone(strict)
+        # 但走 fallback 链必须能算出来
+        base, n = history.baseline_with_fallback("amazon", "orders", ts=now)
+        self.assertEqual(base, 50, "样本不够时应降级到不挑星期几")
+        self.assertGreaterEqual(n, 3)
+
+    def test_migration_backfills_dow_for_old_rows(self):
+        """
+        老库升级:早先写入的行没有 dow,迁移必须把它们回填出来。
+
+        不回填的话这些行在 match_dow=True 时永远命中不了 —— 表现为
+        "升级后基线突然不抑制了",而且没人会想到是迁移漏了。
+        """
+        import sqlite3
+
+        conn = sqlite3.connect(self.db)
+        conn.executescript(
+            "CREATE TABLE metric_history ("
+            " id INTEGER PRIMARY KEY AUTOINCREMENT, platform TEXT NOT NULL,"
+            " key TEXT NOT NULL, ts REAL NOT NULL, hour INTEGER NOT NULL,"
+            " value REAL NOT NULL)")
+        old_ts = time.time() - 3 * DAY  # 3 天前,星期几与今天不同
+        conn.execute(
+            "INSERT INTO metric_history (platform,key,ts,hour,value) VALUES (?,?,?,?,?)",
+            ("amazon", "orders", old_ts,
+             datetime.datetime.fromtimestamp(old_ts).hour, 42.0))
+        conn.commit()
+        conn.close()
+
+        # 新代码连上来:应自动加列并回填
+        history.record("amazon", "orders", 1)  # 触发 _ensure_schema
+        conn = sqlite3.connect(self.db)
+        rows = conn.execute("SELECT ts, dow FROM metric_history").fetchall()
+        conn.close()
+        self.assertEqual(len(rows), 2)
+        for ts, dow in rows:
+            self.assertIsNotNone(dow, "迁移后 dow 不应为 NULL")
+            self.assertEqual(dow, datetime.datetime.fromtimestamp(ts).weekday(),
+                             "回填的星期几必须和 Python 口径一致(0=周一)")
 
 
 class TestFocusOnly(_HistoryCase):

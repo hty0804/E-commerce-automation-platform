@@ -42,10 +42,31 @@ CREATE TABLE IF NOT EXISTS metric_history (
     key      TEXT NOT NULL,
     ts       REAL NOT NULL,          -- unix 时间戳(秒)
     hour     INTEGER NOT NULL,       -- 本地时间的小时(0-23),用于同时段对比
+    dow      INTEGER,                -- 星期几(0=周一..6=周日)。可为 NULL:
+                                     --   ALTER TABLE 加列时不能有 NOT NULL(无默认值),
+                                     --   老库迁移期间先留空再回填。
     value    REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_mh_series ON metric_history(platform, key, ts);
 CREATE INDEX IF NOT EXISTS idx_mh_hour   ON metric_history(platform, key, hour, ts);
+"""
+
+# dow 上的索引**不能**和建表放在同一段里:老库升级时 CREATE TABLE IF NOT EXISTS
+# 会被跳过(表已存在),紧接着建这个索引就会因为 dow 列还不存在而报
+# no such column: dow,整个建表流程失败 —— 结果是升级后历史库直接不可用。
+# 所以它必须等迁移加完列之后再建。
+_INDEX_DOW = ("CREATE INDEX IF NOT EXISTS idx_mh_dow "
+              "ON metric_history(platform, key, dow, hour, ts)")
+
+# 老库升级:加 dow 列并把历史行回填出来。
+# 用 SQL 直接算,避免把几百万行读进 Python 再逐行 UPDATE。
+#   SQLite 的 strftime('%w') 是 0=周日..6=周六,而 Python 的 weekday() 是 0=周一,
+#   所以 (w + 6) % 7 把两边对齐 —— 这个偏移搞错的话,基线会系统性取错星期几,
+#   而且完全不报错,只是周末的量被当成工作日的量来比。
+_MIGRATE_DOW = """
+UPDATE metric_history
+   SET dow = (CAST(strftime('%w', ts, 'unixepoch', 'localtime') AS INTEGER) + 6) % 7
+         WHERE dow IS NULL
 """
 
 # 连接失败时只警告一次,别每轮刷屏
@@ -85,12 +106,35 @@ def _ensure_schema(conn: sqlite3.Connection) -> bool:
         return True
     try:
         conn.executescript(_SCHEMA)
+        _migrate_add_dow(conn)   # 老库补列 —— 必须在建 dow 索引之前
+        conn.execute(_INDEX_DOW)
         _thread_local.schema_ready = True
         return True
     except sqlite3.Error as e:
         log.warning("建表失败(%s)", e)
         close()
         return False
+
+
+def _migrate_add_dow(conn: sqlite3.Connection) -> None:
+    """
+    给早先建的库补上 dow 列(那时还没有"区分工作日/周末"这个能力)。
+
+    为什么不能用 CREATE TABLE IF NOT EXISTS 顺便解决:
+        表已经存在时这条语句直接跳过,新列根本不会被加上。列的新增只能靠
+        ALTER TABLE,而且必须显式判断列是否已存在 —— 否则每次启动都跑一遍迁移。
+    """
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(metric_history)")}
+    if "dow" not in cols:
+        conn.execute("ALTER TABLE metric_history ADD COLUMN dow INTEGER")
+        conn.execute(_MIGRATE_DOW)
+        conn.commit()
+        log.info("指标历史库已升级:新增 dow 列并回填 %d 行", conn.total_changes)
+    elif conn.execute(
+            "SELECT 1 FROM metric_history WHERE dow IS NULL LIMIT 1").fetchone():
+        # 列在但值没回填(上一轮迁移被打断):补一次
+        conn.execute(_MIGRATE_DOW)
+        conn.commit()
 
 
 def _connect(write: bool = True) -> Optional[sqlite3.Connection]:
@@ -216,9 +260,11 @@ def record_many(samples: Sequence[Tuple[str, str, float, Optional[float]]]) -> b
             # 行为退回纯环比。这是**故意**的:宁可多报,不因省空间而漏报。
             continue
         ts = time.time() if ts is None else ts
-        hour = datetime.datetime.fromtimestamp(ts).hour
+        # weekday():0=周一..6=周日。与 _MIGRATE_DOW 里的口径保持一致。
+        moment = datetime.datetime.fromtimestamp(ts)
         try:
-            rows.append((platform, key, float(ts), hour, float(value)))
+            rows.append((platform, key, float(ts), moment.hour, moment.weekday(),
+                         float(value)))
         except (TypeError, ValueError):
             # 拿不到数字就不记,别让一条脏数据把整批写挂
             continue
@@ -230,7 +276,8 @@ def record_many(samples: Sequence[Tuple[str, str, float, Optional[float]]]) -> b
         return False
     try:
         conn.executemany(
-            "INSERT INTO metric_history (platform, key, ts, hour, value) VALUES (?,?,?,?,?)",
+            "INSERT INTO metric_history (platform, key, ts, hour, dow, value) "
+            "VALUES (?,?,?,?,?,?)",
             rows,
         )
         conn.commit()
@@ -245,11 +292,16 @@ def record_many(samples: Sequence[Tuple[str, str, float, Optional[float]]]) -> b
 def baseline(platform: str, key: str, ts: Optional[float] = None,
              lookback_days: Optional[int] = None,
              min_samples: Optional[int] = None,
-             hour_window: int = 0) -> Tuple[Optional[float], int]:
+             hour_window: int = 0,
+             match_dow: Optional[bool] = None) -> Tuple[Optional[float], int]:
     """
     取"历史上同一时段"的中位数作为基线。
 
     :param hour_window: 小时的容差。0 = 只要该小时本身;1 = 该小时 ±1。
+    :param match_dow: 是否要求星期几也相同。None = 取配置 BASELINE_MATCH_DOW。
+                      ⚠️ 开启后样本会少一大截(7 天回看里每个星期几只有 1 条),
+                      所以必须配合 baseline_with_fallback() 的降级链 ——
+                      单用这个函数很容易一直"样本不足",等于基线没开。
     :return: (基线值, 样本数)。样本不足或库不可用时返回 (None, 实际样本数)。
 
     为什么用中位数而不是平均数:一两次促销 / 断货会把平均值拉偏,
@@ -257,6 +309,8 @@ def baseline(platform: str, key: str, ts: Optional[float] = None,
     """
     lookback_days = lookback_days if lookback_days is not None else config.BASELINE_LOOKBACK_DAYS
     min_samples = min_samples if min_samples is not None else config.BASELINE_MIN_SAMPLES
+    if match_dow is None:
+        match_dow = getattr(config, "BASELINE_MATCH_DOW", True)
 
     conn = _connect(write=False)
     if conn is None:
@@ -271,13 +325,18 @@ def baseline(platform: str, key: str, ts: Optional[float] = None,
         hours = [(now.hour + d) % 24 for d in range(-hour_window, hour_window + 1)]
         placeholders = ",".join("?" * len(hours))
 
-        cur = conn.execute(
+        sql = (
             f"SELECT value FROM metric_history "
             # ts 用严格小于:本轮采集的值本身就是 now_ts,若用 <= 就会把自己算进基线,
             # 变成"自己跟自己比" —— 基线永远等于当前值,所有异常都被判为正常波动。
-            f"WHERE platform=? AND key=? AND ts>=? AND ts<? AND hour IN ({placeholders})",
-            [platform, key, since, ts, *hours],
+            f"WHERE platform=? AND key=? AND ts>=? AND ts<? AND hour IN ({placeholders})"
         )
+        params = [platform, key, since, ts, *hours]
+        if match_dow:
+            sql += " AND dow=?"
+            params.append(now.weekday())
+
+        cur = conn.execute(sql, params)
         values = [r[0] for r in cur.fetchall()]
     except sqlite3.Error as e:
         log.warning("读取基线失败(%s),退回纯环比", e)
@@ -293,15 +352,31 @@ def baseline(platform: str, key: str, ts: Optional[float] = None,
 def baseline_with_fallback(platform: str, key: str, ts: Optional[float] = None
                            ) -> Tuple[Optional[float], int]:
     """
-    先按"同一小时"取;样本不够就放宽到 ±1 小时。
+    从最严到最松依次放宽,取第一个样本够的口径。
 
-    数据充足时用更精确的窗口,新上的 SKU 数据少时靠放宽窗口尽快攒够样本 ——
-    但样本仍然不够就老实返回 None,让上层退回纯环比。
+        同星期几 + 同小时  →  同星期几 + 小时±1  →  不挑星期几 + 同小时
+                                              →  不挑星期几 + 小时±1
+
+    ⚠️ 这条降级链是**必需的**,不是锦上添花:
+        区分星期几之后,7 天回看里每个星期几只剩 1 条样本,而 min_samples 默认 3 ——
+        如果只取最严那一档,基线永远凑不够样本,结果就是基线等于没开、
+        告警一条没少,而你以为已经降噪了。这种"开关开了但不生效"最坑人。
+        所以必须一层层退到"能算出基线"为止,实在算不出才返回 None 让上层退回纯环比。
+
+    数据充足时用最精确的口径(周末的量和周末比),新上的 SKU 数据少时靠放宽尽快攒够样本。
     """
-    b, n = baseline(platform, key, ts, hour_window=0)
+    if getattr(config, "BASELINE_MATCH_DOW", True):
+        b, n = baseline(platform, key, ts, hour_window=0, match_dow=True)
+        if b is not None:
+            return b, n
+        b, n = baseline(platform, key, ts, hour_window=1, match_dow=True)
+        if b is not None:
+            return b, n
+
+    b, n = baseline(platform, key, ts, hour_window=0, match_dow=False)
     if b is not None:
         return b, n
-    return baseline(platform, key, ts, hour_window=1)
+    return baseline(platform, key, ts, hour_window=1, match_dow=False)
 
 
 def _median(values: Sequence[float]) -> float:

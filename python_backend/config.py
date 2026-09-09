@@ -161,6 +161,12 @@ BASELINE_MIN_SAMPLES = _int("BASELINE_MIN_SAMPLES", 3)
 #   1.2 = 基线变动要达到阈值的 120% 才放行 → 更保守,误报最少但可能漏报
 # 调低 = 更敏感;调高 = 更保守。
 BASELINE_TOLERANCE = _float("BASELINE_TOLERANCE", 1.0)
+# 是否要求"星期几也相同"。跨境电商周末和工作日的订单节奏差别很大,
+# 拿工作日的量去衡量周末会系统性误判。
+# ⚠️ 开启后样本会少一大截(7 天回看里每个星期几只有 1 条),
+#    所以建议把 BASELINE_LOOKBACK_DAYS 提到 28 天左右(每个星期几约 4 条)。
+#    样本不够时会自动降级为"不挑星期几",不会因此失效 —— 见 history.baseline_with_fallback。
+BASELINE_MATCH_DOW = _bool("BASELINE_MATCH_DOW", True)
 
 # ------------------ 日志 ------------------
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
