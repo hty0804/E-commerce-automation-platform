@@ -22,6 +22,10 @@ from unittest import mock
 # ---------------------------------------------------------------- 环境准备
 _TMP = tempfile.mkdtemp(prefix="ecom_sop_test_")
 os.environ["STATE_FILE"] = os.path.join(_TMP, "state.json")
+# 历史库也必须隔离:否则每跑一次测试就往真实的 python_backend/history.db 里
+# 塞一批 100/10/0 这种测试样本,把基线中位数带偏 —— 既污染了生产数据,
+# 又会让"该告警的不告警"这种假象出现在本地跑测试的时候。
+os.environ["HISTORY_DB"] = os.path.join(_TMP, "history.db")
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _BACKEND = os.path.dirname(_HERE)
@@ -119,10 +123,22 @@ def _reset_state():
 
 
 class Base(unittest.TestCase):
+    """
+    本文件测的是**环比**行为,所以默认关掉基线。
+
+    不关的话,同一个 _TMP 里的 history.db 会被前面的用例写入样本,
+    后面的用例就可能被基线抑制 —— 表现为"该告警的没告警",
+    看起来像产品 bug,实际是测试之间互相污染。基线本身的行为
+    由 test_history.py 单独覆盖,两边各管一段,互不干扰。
+    """
+
     def setUp(self):
         _reset_state()
+        self._baseline_off = mock.patch.object(config, "BASELINE_ENABLED", False)
+        self._baseline_off.start()
 
     def tearDown(self):
+        self._baseline_off.stop()
         _reset_state()
 
 

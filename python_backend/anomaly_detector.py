@@ -1,8 +1,21 @@
 """
-简单的环比 + 阈值异常检测。
+指标异常检测:**环比** 触发,**同时段基线** 复核。
 
-思路: 每次抓到关键指标(库存、订单量等)后存入本地 state.json,
-下次运行时和上一次的数值做比较,变化幅度超过设定阈值就判定为异常。
+思路:
+    1. 环比 —— 每次抓到关键指标(库存、订单量等)后存入本地 state.json,
+       下次运行时和上一次的数值比较,变化幅度超过阈值就**初步判定**为异常。
+    2. 基线 —— 再用 history.py 里"最近 N 天同一时段的中位数"复核一遍:
+       如果相对历史正常水平其实没怎么动,就抑制掉这条告警。
+
+为什么要有第二道闸(这是从"每天假告警"里总结出来的):
+    纯环比最大的问题是**上一小时本身可能就不正常**。凌晨 2 点做闪购冲到 80 单,
+    3 点回落到常态的 30 单,环比就是 -62%,天天来一条假告警。报多了人就再也不看了 ——
+    一个被忽略的告警系统,比没有告警系统更糟,因为它给人虚假的安全感。
+    有了基线,拿"最近 7 天凌晨 3 点的水平(比如 28 单)"参照,30 单 = 正常,正确抑制。
+    反过来,真断货时(比如常态 28 单,突然掉到 2 单)相对基线也是暴跌,不会被误杀。
+
+    相关配置见 config.py: BASELINE_ENABLED / BASELINE_LOOKBACK_DAYS /
+    BASELINE_MIN_SAMPLES / BASELINE_TOLERANCE。关掉就退回纯环比。
 
 ⚠️ 性能注意(大数据量下这里比 API 调用还慢):
     早期实现里 check_metric() 每比对一个 SKU 就 _load_state() + _save_state() 一次,
@@ -23,9 +36,10 @@ import json
 import logging
 import os
 import time
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import config
+import history
 
 log = logging.getLogger(__name__)
 
@@ -192,16 +206,66 @@ def check_metric(platform: str, key: str, current_value: float, threshold: float
     return result
 
 
-def collect_incidents(checks: List[Dict]) -> List[Dict]:
+def _baseline_allows(platform: str, key: str, value: float, threshold: float,
+                     direction: str, ts: Optional[float] = None) -> Tuple[bool, str]:
+    """
+    基线这道闸:环比异常,但相对"历史同时段的正常水平"其实是正常波动 → 抑制。
+
+    这是解决误报的关键一环。环比(和上一小时比)最大的问题是**上一小时本身可能就不正常**:
+    凌晨 2 点做个闪购冲到 80 单,3 点回落到常态的 30 单,环比就是 -62%,天天来一条假告警;
+    但拿"最近 7 天凌晨 3 点的水平(比如 28 单)"当基线,30 单完全正常,正确抑制。
+
+    :return: (是否放行, 说明)。放行=True 表示保留这条告警。
+             样本不足 / 历史库不可用 / 基线为 0 时一律放行 ——
+             **宁可多报,也不要因为数据不够而漏掉真异常**。
+    """
+    if not getattr(config, "BASELINE_ENABLED", False) or value is None:
+        return True, ""
+    try:
+        base, n = history.baseline_with_fallback(platform, key, ts)
+    except Exception as e:  # 历史库出任何问题都不能影响检测主流程
+        log.warning("基线查询异常(%s),按环比判定", e)
+        return True, ""
+
+    if base is None:
+        return True, f"基线样本不足(只有 {n} 条),按环比判定"
+    if base <= 0:
+        # 基线是 0 没法算变动比例(比如这个 SKU 历史上一直没库存),不抑制
+        return True, ""
+
+    ratio = (value - base) / base
+    need = threshold * getattr(config, "BASELINE_TOLERANCE", 1.0)
+    if direction == "drop":
+        passed = ratio <= -need
+    elif direction == "rise":
+        passed = ratio >= need
+    else:
+        passed = abs(ratio) >= need
+
+    if passed:
+        return True, ""
+    return False, (f"相对同时段基线 {base:g} 变动 {ratio * 100:+.1f}%,"
+                   f"未达阈值 {need * 100:.0f}%")
+
+
+def collect_incidents(checks: List[Dict], suppressed: Optional[List[Dict]] = None,
+                      record_history: bool = True) -> List[Dict]:
     """
     批量异常检测:一次 load、循环比对、一次 save。
 
     返回结构化的异常列表(带 previous / change_ratio,供 incident.py 做分类与建议):
     [{"platform","key","value","previous","change_ratio","threshold","direction","message"}, ...]
+
+    :param suppressed: 可选。传入一个列表,被基线抑制掉的项会写进去 ——
+                       抑制了什么必须能看见,否则"告警变少了"到底是降噪成功
+                       还是检测坏了,你根本分不清。
+    :param record_history: 是否把本轮取值写入历史库。必须在**比对之后**写,
+                           否则今天的值会混进基线里,等于自己跟自己比。
     """
     if not checks:
         return []
 
+    now_ts = time.time()
     with state_lock():
         state = _load_state()
         incidents = []
@@ -210,29 +274,53 @@ def collect_incidents(checks: List[Dict]) -> List[Dict]:
             state_key = f"{c['platform']}:{c['key']}"
             previous = state.get(state_key)
             value = c["value"]
+            direction = c.get("direction", "drop")
             r = _compare(
                 c["platform"], c["key"], value, previous,
-                c["threshold"], c.get("direction", "drop"),
+                c["threshold"], direction,
                 c.get("min_previous", 0.0),
             )
             if r["anomaly"]:
-                ratio = (value - previous) / previous if previous else None
-                incidents.append({
-                    "platform": c["platform"],
-                    "key": c["key"],
-                    "value": value,
-                    "previous": previous,
-                    "change_ratio": ratio,
-                    "threshold": c["threshold"],
-                    "direction": c.get("direction", "drop"),
-                    "message": r["message"],
-                })
+                allowed, note = _baseline_allows(
+                    c["platform"], c["key"], value, c["threshold"], direction, now_ts)
+                if allowed:
+                    ratio = (value - previous) / previous if previous else None
+                    incidents.append({
+                        "platform": c["platform"],
+                        "key": c["key"],
+                        "value": value,
+                        "previous": previous,
+                        "change_ratio": ratio,
+                        "threshold": c["threshold"],
+                        "direction": direction,
+                        "message": r["message"],
+                    })
+                else:
+                    log.info("[%s] %s 环比异常但已被基线抑制:%s(环比判定:%s)",
+                             c["platform"], c["key"], note, r["message"])
+                    if suppressed is not None:
+                        suppressed.append({
+                            "platform": c["platform"], "key": c["key"],
+                            "value": value, "previous": previous,
+                            "reason": note, "message": r["message"],
+                        })
             # value 为 None 表示本轮没取到数,不能写进状态:
             # 否则会把上一轮的真实基线冲掉,下一轮永远比不出变化。
             if value is not None:
                 state[state_key] = value
 
         _save_state(state)
+
+    # 比对完之后才写历史:顺序反了会把本轮值混进基线,变成自己跟自己比,
+    # 基线永远等于当前值 —— 于是所有告警都被"自己跟自己一样"抑制掉,监控彻底失明。
+    if record_history:
+        try:
+            history.record_many([
+                (c["platform"], c["key"], c["value"], now_ts)
+                for c in checks if c.get("value") is not None
+            ])
+        except Exception as e:
+            log.warning("写入指标历史失败(%s),不影响本轮检测", e)
     return incidents
 
 

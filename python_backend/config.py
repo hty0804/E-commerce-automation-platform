@@ -125,5 +125,31 @@ PDD_PAGE_INTERVAL = _float("PDD_PAGE_INTERVAL", 0.6)
 # 慢性问题(如任务长期超时)每轮都发会刷屏,刷到最后就没人看告警了。
 ALERT_DEDUPE_MIN = _int("ALERT_DEDUPE_MIN", 60)
 
+# ------------------ 指标历史 ------------------
+# state.json 每个 key 只存"上一次的值",历史全丢 —— 既查不了历史,
+# 也没法做同时段对比。这里单独开一个 append-only 的 SQLite 库存历史。
+# 注意:游标 / LLM 冷却 / 上架幂等这些仍留在 state.json,不迁过来 ——
+# 它们靠文件锁已经能并发安全了,迁库只是增加风险,没有收益。
+HISTORY_DB = os.getenv("HISTORY_DB") or os.path.join(_HERE, "history.db")
+# 历史保留天数。按小时跑、每天 24 条/指标,90 天大约几万行,完全够用。
+HISTORY_RETENTION_DAYS = _int("HISTORY_RETENTION_DAYS", 90)
+
+# ------------------ 基线对比(降误报) ------------------
+# 环比(和上一小时比)最大的问题是**上一小时本身可能就不正常**:
+# 凌晨 2 点做个闪购冲到 80 单,3 点回落到常态的 30 单,环比就是 -62%,
+# 于是每天这个点都来一条假告警。
+# 基线对比是拿"历史上同一时段的正常水平"做参照,这种抖动就能被正确抑制。
+BASELINE_ENABLED = _bool("BASELINE_ENABLED", True)
+# 回看天数:取最近 N 天、同一小时(±1 小时窗口)的样本取中位数。
+BASELINE_LOOKBACK_DAYS = _int("BASELINE_LOOKBACK_DAYS", 7)
+# 样本不足时不做基线判断,退回纯环比 —— 宁可不抑制,也不要误抑制真异常。
+BASELINE_MIN_SAMPLES = _int("BASELINE_MIN_SAMPLES", 3)
+# 基线这道闸的松紧:要求「相对基线的变动」达到 阈值 × 该系数 才放行。
+#   1.0 = 与阈值同口径(环比和基线都要超阈值才告警)—— 默认值,最稳
+#   0.8 = 基线变动达到阈值的 80% 就放行 → 更敏感,抑制得更少
+#   1.2 = 基线变动要达到阈值的 120% 才放行 → 更保守,误报最少但可能漏报
+# 调低 = 更敏感;调高 = 更保守。
+BASELINE_TOLERANCE = _float("BASELINE_TOLERANCE", 1.0)
+
 # ------------------ 日志 ------------------
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()

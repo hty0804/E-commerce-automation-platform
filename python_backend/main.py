@@ -30,6 +30,7 @@ from decimal import Decimal, InvalidOperation
 from amazon_client import AmazonSPAPIClient
 from pdd_client import PinduoduoClient
 import anomaly_detector
+import history
 import incident
 import alerts
 import listing_gen
@@ -356,7 +357,16 @@ def run_hourly_monitor() -> None:
     # 既没告警也没日志,外面看起来监控一直在跑,实际上早就死了。
     elapsed = time.time() - started
     try:
-        incidents = anomaly_detector.collect_incidents(checks)
+        # suppressed:被"同时段基线"抑制掉的环比异常。必须收上来并打出来 ——
+        # 否则哪天检测逻辑写坏了、把所有告警都抑制掉,你看到的只是"群里安静了",
+        # 跟"业务真的健康"长得一模一样,等真出事时才发现监控早就瞎了。
+        suppressed: list = []
+        incidents = anomaly_detector.collect_incidents(checks, suppressed=suppressed)
+        if suppressed:
+            print(f"[baseline] 本轮 {len(suppressed)} 项环比异常被同时段基线判定为正常波动,已抑制:")
+            for s in suppressed:
+                print(f"  - [{s['platform']}] {s['key']}: {s['previous']} → {s['value']}"
+                      f" | 抑制原因: {s['reason']}")
 
         # 抓取失败类错误也纳入异常体系(会被归类为鉴权失败 / 限流 / 接口异常 / 数据缺失)
         for msg in error_messages:
@@ -384,6 +394,16 @@ def run_hourly_monitor() -> None:
     # 心跳:记下"本轮成功跑完"的时间,供 `python main.py health` 判断监控是否还活着。
     # 监控系统自己挂了却没人知道,是这类系统最危险的失效模式 —— 所以必须留个死信开关。
     _mark_heartbeat(now)
+
+    # 历史库清理:每天只在凌晨那一轮做一次。
+    # 每小时都跑没意义 —— DELETE + 可能的 VACUUM 要扫全表,而多留 23 小时的数据毫无代价。
+    if datetime.datetime.now().hour == 3:
+        try:
+            deleted = history.prune()
+            if deleted:
+                print(f"[history] 已清理 {deleted} 条超过 {config.HISTORY_RETENTION_DAYS} 天的历史")
+        except Exception:
+            log.warning("清理指标历史失败(不影响本轮监控)", exc_info=True)
 
     print(f"[stat] 耗时 {elapsed:.1f}s | 亚马逊 {stats['amazon_skus']} SKU / "
           f"拼多多 {stats['pdd_goods']} 商品 / 订单 {stats['orders']} 单")
@@ -496,6 +516,8 @@ def _main() -> int:
             print(f"找不到输入文件 {src}。格式示例见 README「生成 Listing」。")
             return 1
         generate_and_publish(items, plat)
+    elif command == "history":
+        return _history_cmd(sys.argv[2:])
     else:
         print(
             "用法:\n"
@@ -503,9 +525,69 @@ def _main() -> int:
             "  python main.py health                 # 死信检查:监控是否还在按时跑\n"
             "  python main.py daemon                 # 常驻进程,内置每小时调度\n"
             "  python main.py genlist input.json     # 用大模型生成 Listing 并本地校验\n"
-            "  python main.py genlist input.json pdd # 生成拼多多中文 Listing"
+            "  python main.py genlist input.json pdd # 生成拼多多中文 Listing\n"
+            "  python main.py history [子命令]       # 查看/清理指标历史库(基线用)\n"
+            "      series                            # 列出所有指标序列与样本数\n"
+            "      recent <platform> <key> [n]       # 看某个指标最近的取值\n"
+            "      baseline <platform> <key>         # 看该指标当前时段的基线值\n"
+            "      prune                             # 清理超过保留期的历史"
         )
     return 0
+
+
+def _history_cmd(args: list) -> int:
+    """指标历史的查看/维护入口。查不到东西时要把原因说清楚,别只打印个空表格。"""
+    sub = args[0] if args else "series"
+
+    if not history.is_available():
+        print(f"指标历史库不可用或还没有数据: {config.HISTORY_DB}\n"
+              f"先跑几轮 `python main.py monitor` 攒样本,基线对比才会生效。")
+        return 1
+
+    if sub == "series":
+        rows = history.series()
+        if not rows:
+            print("历史库里还没有任何数据。")
+            return 0
+        print(f"{'platform':<10} {'key':<28} {'样本数':>7}  最早 / 最新")
+        for platform, key, n, first, last in rows:
+            f = datetime.datetime.fromtimestamp(first).strftime("%m-%d %H:%M") if first else "-"
+            t = datetime.datetime.fromtimestamp(last).strftime("%m-%d %H:%M") if last else "-"
+            print(f"{platform:<10} {key:<28} {n:>7}  {f} / {t}")
+        return 0
+
+    if sub == "recent":
+        if len(args) < 3:
+            print("用法: python main.py history recent <platform> <key> [n]")
+            return 1
+        limit = int(args[3]) if len(args) > 3 else 20
+        rows = history.recent(args[1], args[2], limit)
+        if not rows:
+            print(f"没有 {args[1]} / {args[2]} 的历史。")
+            return 0
+        for ts, value in rows:
+            print(f"  {datetime.datetime.fromtimestamp(ts).strftime('%m-%d %H:%M')}  {value:g}")
+        return 0
+
+    if sub == "baseline":
+        if len(args) < 3:
+            print("用法: python main.py history baseline <platform> <key>")
+            return 1
+        base, n = history.baseline_with_fallback(args[1], args[2])
+        if base is None:
+            print(f"{args[1]} / {args[2]} 当前时段样本不足(只有 {n} 条,"
+                  f"需要 {config.BASELINE_MIN_SAMPLES} 条),暂不做基线抑制。")
+            return 0
+        print(f"{args[1]} / {args[2]} 当前时段基线 = {base:g}(基于 {n} 条样本)")
+        return 0
+
+    if sub == "prune":
+        deleted = history.prune()
+        print(f"已清理 {deleted} 条超过 {config.HISTORY_RETENTION_DAYS} 天的历史")
+        return 0
+
+    print(f"未知的 history 子命令: {sub}")
+    return 1
 
 
 if __name__ == "__main__":

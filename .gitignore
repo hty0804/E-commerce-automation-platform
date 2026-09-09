@@ -27,6 +27,11 @@ state.json.tmp
 state.json.broken
 *.log
 
+# 指标历史库(运行时生成,WAL 模式还会带 -wal / -shm 两个影子文件)
+history.db
+history.db-wal
+history.db-shm
+
 # 生成器的原子写临时文件
 *.js.tmp
 
