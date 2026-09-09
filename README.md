@@ -39,12 +39,43 @@
 ```
 index.html              登录页 + 应用外壳
 assets/css/style.css    样式（响应式：1180 / 992 / 860 / 640 四档断点）
+assets/js/listing_rules.js  【自动生成】Listing 规则，由 shared/listing_rules.json 生成
 assets/js/store.js      数据层 + 模拟执行引擎 + 异常分类/建议 + Listing 生成（localStorage 持久化）
 assets/js/ui.js         Toast / Modal / 标签组件 + 纯 SVG 图表
 assets/js/views.js      9 个业务页面
 assets/js/app.js        路由、登录、定时调度
+shared/listing_rules.json  ★ Listing 规则的唯一数据源（前后端共用，见下节）
+tools/gen_listing_rules.py  JSON → JS 生成器
 python_backend/         原 Python 自动化框架（SP-API / 拼多多客户端、检测、分类、Listing 生成、告警、调度）
 ```
+
+## Listing 规则是单一数据源（改之前先看这节）
+
+长度红线、违规词、类目 schema、中英词表、emoji 判定区间
+**只准写在一处**：`shared/listing_rules.json`。
+Python 后端（`listing_gen.py`）和前端都从它加载。
+
+前端是零构建的（双击 `index.html` 就能跑），`file://` 下 `fetch()` 读本地 JSON 会被 CORS 拦，
+所以前端吃的是生成出来的 `assets/js/listing_rules.js`。
+
+**改规则的唯一正确姿势：**
+
+```bash
+# 1. 改 shared/listing_rules.json
+# 2. 重新生成前端那份（漏了这步 CI 和测试会直接失败）
+python tools/gen_listing_rules.py
+# 3. 跑一遍测试确认两端一致
+python -m unittest discover -s python_backend/tests -v
+npm test
+```
+
+为什么这么麻烦：以前两端各硬编码一份，并且**已经实际漂移过** ——
+前端漏了 `best-seller` / `cure` / `100% cure` 三个违规词，
+于是出现「前端显示校验通过、后端却拦截」，而 `cure` 属于医疗功效类合规高危词。
+现在 `python_backend/tests/test_rules_sync.py` 会在两端不一致时直接测试失败。
+
+emoji 判定用的是**码点区间**而不是正则字面量：Python 写 `\U0001F000`、
+JS 写 `\u{1F000}`（带 `u` 标志），转义语法不兼容，各自从同一份区间构建才能保证范围一致。
 
 ## AI 能力说明（可选，默认全关）
 
@@ -114,10 +145,12 @@ direction = "both"  → |change_ratio| >= threshold 时告警（价格）
 ```bash
 # 1) 前端冒烟测试（验证 9 个页面渲染 + Listing 全流程）
 npm install        # 安装 jsdom 开发依赖
-npm test          # 等价于 node smoke_test.js，应输出 PASS: 29  FAIL: 0
+npm test          # 等价于 node smoke_test.js，应输出 PASS: 38  FAIL: 0
 
 # 2) Python 后端回归测试（不需要装任何依赖，测试内部用桩替换 requests/botocore）
-python -m unittest discover -s python_backend/tests -v   # 34 项，覆盖历次修复的 bug
+python -m unittest discover -s python_backend/tests -v   # 52 项，覆盖历次修复的 bug
+#    其中 test_rules_sync.py 专门盯「前后端规则是否同源」，改了 shared/ 但忘了
+#    重跑 tools/gen_listing_rules.py 会在这里失败
 #   或：npm run test:py      （需本机有 python 命令）
 #   跑全部：npm run test:all
 

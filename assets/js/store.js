@@ -188,100 +188,72 @@
    * 与 python_backend/listing_gen.py 同一套语义：
    *   类目 schema 决定必填属性 → 生成标题/五点/描述/关键词 → 本地校验 → 转 payload
    *   不配密钥时用规则草稿，配了才走大模型（网页端只做模拟预览，真实调用在后端）
+   *
+   * 规则数据全部来自 window.LISTING_RULES（由 shared/listing_rules.json 生成），
+   * 与 Python 后端是同一份数据源。以前本文件另抄了一份，并且**已经实际漂移过**：
+   * 前端漏了 best-seller / cure / 100% cure 三个违规词，于是出现
+   * 「前端显示校验通过、后端却拦截」，而 cure 属于医疗功效类合规高危词。
+   * 不要再在本文件里硬编码任何规则数据。
    * ========================================================== */
-  var LISTING_LIMITS = {
-    amazon: { titleMax: 200, titleSoft: 150, titleMin: 40, bulletMax: 255, bulletCount: 5, descMax: 2000, kwBytes: 250, lang: 'en', label: '英文（美国站）' },
-    pdd: { titleMax: 60, titleSoft: 60, titleMin: 8, bulletMax: 200, bulletCount: 5, descMax: 1500, kwBytes: 250, lang: 'zh', label: '中文（拼多多）' }
-  };
+  var RULES = global.LISTING_RULES;
+  if (!RULES) throw new Error('assets/js/listing_rules.js 未加载：Listing 规则缺失，请在 store.js 之前引入');
 
-  // 只列 attributes 层的必填项：item_name 就是标题、product_type 在 payload 顶层传
-  var LISTING_SCHEMA = {
-    '3C数码': {
-      productType: 'ELECTRONIC_DEVICE', itemType: 'electronics', node: 'Electronics > Accessories',
-      required: ['brand', 'color', 'power_source'],
-      recommended: ['connectivity_technology', 'compatible_devices', 'wattage', 'battery_capacity', 'warranty_description', 'item_weight']
-    },
-    '家居厨房': {
-      productType: 'HOME_PRODUCT', itemType: 'home', node: 'Home & Kitchen > Kitchen & Dining',
-      required: ['brand', 'color', 'material'],
-      recommended: ['capacity', 'item_dimensions', 'item_weight', 'is_dishwasher_safe', 'care_instructions', 'number_of_pieces']
-    },
-    '户外运动': {
-      productType: 'SPORTING_GOODS', itemType: 'outdoor', node: 'Sports & Outdoors > Outdoor Recreation',
-      required: ['brand', 'color', 'material'],
-      recommended: ['item_weight', 'item_dimensions', 'sport_type', 'water_resistance_level', 'capacity', 'included_components']
-    },
-    '个护健康': {
-      productType: 'BEAUTY_PRODUCT', itemType: 'personal-care', node: 'Beauty & Personal Care',
-      required: ['brand', 'item_form', 'material'],
-      recommended: ['skin_type', 'scent', 'volume', 'target_gender', 'color']
-    },
-    '母婴玩具': {
-      productType: 'TOY', itemType: 'toy', node: 'Toys & Games',
-      required: ['brand', 'color', 'manufacturer_minimum_age'],
-      recommended: ['material', 'item_dimensions', 'educational_objective', 'batteries_required', 'safety_warning']
-    },
-    '服饰配饰': {
-      productType: 'APPAREL', itemType: 'apparel', node: 'Clothing, Shoes & Jewelry',
-      required: ['brand', 'color', 'size', 'material'],
-      recommended: ['fabric_type', 'care_instructions', 'fit_type', 'target_gender', 'style', 'occasion']
-    }
-  };
-  var LISTING_SCHEMA_DEFAULT = {
-    productType: 'PRODUCT', itemType: 'product', node: '请先确认类目节点',
-    required: ['brand'], recommended: ['color', 'material', 'item_dimensions', 'item_weight']
-  };
+  var LIMITS = RULES.limits;
+  var BANNED_WORDS = RULES.banned_words;
+  var ATTR_DEFAULTS = RULES.attr_defaults;
+  var TOP_LEVEL_FIELDS = RULES.top_level_fields || [];
 
-  // 平台禁止 / 高风险表述
-  var BANNED_WORDS = [
-    ['best seller', '平台禁止销量排名类表述'],
-    ['#1', '平台禁止排名类表述'],
-    ['no.1', '平台禁止排名类表述'],
-    ['free shipping', '配送政策由平台决定，不能自行承诺'],
-    ['free gift', '赠品表述易触发合规审核'],
-    ['fda approved', '未取得认证不得宣称'],
-    ['guarantee', '绝对化承诺，易触发合规审核'],
-    ['sale', '促销词不得出现在标题'],
-    ['promotion', '促销词不得出现在标题'],
-    ['clearance', '促销词不得出现在标题'],
-    ['cheap', '低质表述影响转化与权重']
-  ];
+  // 视图层用的是 camelCase（lim.titleMax），这里做一次机械转换。
+  // 转换只写在这一处，视图层继续用 LISTING_LIMITS，不用改。
+  var LISTING_LIMITS = {};
+  Object.keys(LIMITS).forEach(function (p) {
+    var l = LIMITS[p];
+    LISTING_LIMITS[p] = {
+      titleMax: l.title_max, titleSoft: l.title_soft, titleMin: l.title_min,
+      bulletMax: l.bullet_max, bulletCount: l.bullet_count,
+      descMax: l.desc_max, kwBytes: l.keyword_bytes,
+      lang: l.lang, label: l.label
+    };
+  });
 
-  var ATTR_DEFAULTS = {
-    power_source: 'Battery Powered', material: 'Durable Material', size: 'One Size',
-    item_form: 'Solid', manufacturer_minimum_age: '36', color: 'As Shown', brand: 'Generic'
-  };
+  // required 里的 item_name / product_type 在 SP-API payload 是顶层字段，
+  // 不进 attributes，所以前端展示时要过滤掉。过滤规则也来自共享文件。
+  function schemaEntry(raw) {
+    return {
+      productType: raw.product_type,
+      itemType: raw.item_type_keyword,
+      node: raw.browse_hint,
+      required: (raw.required || []).filter(function (f) {
+        return TOP_LEVEL_FIELDS.indexOf(f) < 0;
+      }),
+      recommended: raw.recommended || []
+    };
+  }
 
-  var CN2EN = [
-    ['无线蓝牙耳机', 'Wireless Bluetooth Earbuds'], ['蓝牙耳机', 'Bluetooth Earbuds'],
-    ['主动降噪', 'Active Noise Cancelling'], ['降噪', 'Noise Cancelling'],
-    ['超长续航', 'Long Battery Life'], ['续航', 'Battery Life'],
-    ['防水', 'Waterproof'], ['防摔', 'Shockproof'], ['硅胶', 'Silicone'],
-    ['手机壳', 'Phone Case'], ['保护壳', 'Protective Case'], ['全包', 'Full Coverage'],
-    ['保温杯', 'Insulated Tumbler'], ['不锈钢', 'Stainless Steel'], ['大容量', 'Large Capacity'],
-    ['台灯', 'Desk Lamp'], ['护眼', 'Eye-Caring'], ['调光', 'Dimmable'],
-    ['充电', 'Rechargeable'], ['快充', 'Fast Charging'], ['便携', 'Portable'],
-    ['车载', 'Car'], ['吸尘器', 'Vacuum Cleaner'], ['无线', 'Wireless'],
-    ['四件套', 'Bedding Set'], ['纯棉', '100% Cotton'], ['床上用品', 'Bedding'],
-    ['加厚', 'Thickened'], ['折叠', 'Foldable'], ['收纳', 'Storage'],
-    ['厨房', 'Kitchen'], ['户外', 'Outdoor'], ['运动', 'Sports'],
-    ['健身', 'Fitness'], ['瑜伽', 'Yoga'], ['露营', 'Camping'],
-    ['儿童', 'Kids'], ['婴儿', 'Baby'], ['玩具', 'Toy'],
-    ['套装', 'Set'], ['升级', 'Upgraded'], ['款', ''],
-    ['黑色', 'Black'], ['白色', 'White'], ['灰色', 'Grey'], ['蓝色', 'Blue'],
-    ['红色', 'Red'], ['绿色', 'Green'], ['粉色', 'Pink'], ['透明', 'Clear'],
-    ['大号', 'Large'], ['中号', 'Medium'], ['小号', 'Small'],
-    ['英寸', 'inch'], ['厘米', 'cm'], ['毫安', 'mAh'], ['瓦', 'W']
-  ].sort(function (a, b) { return b[0].length - a[0].length; });  // 长词优先
+  var LISTING_SCHEMA = {};
+  Object.keys(RULES.category_schema).forEach(function (k) {
+    if (k.charAt(0) === '_') return;  // 下划线开头的是说明字段，不是类目
+    LISTING_SCHEMA[k] = schemaEntry(RULES.category_schema[k]);
+  });
+  var LISTING_SCHEMA_DEFAULT = schemaEntry(RULES.default_schema);
 
-  var SCENE_BY_CATEGORY = {
-    '3C数码': 'for Daily Commute and Travel',
-    '家居厨房': 'for Home Kitchen and Daily Use',
-    '户外运动': 'for Camping, Hiking and Outdoor Activities',
-    '个护健康': 'for Daily Personal Care',
-    '母婴玩具': 'for Kids and Family Fun',
-    '服饰配饰': 'for Everyday Wear'
-  };
+  // 长词优先，避免「主动降噪」被先替换掉「降噪」而留下「主动」
+  var CN2EN = RULES.cn2en.slice().sort(function (a, b) { return b[0].length - a[0].length; });
+  var SCENE_BY_CATEGORY = RULES.scene_by_category;
+
+  // emoji 判定区间与后端同源。
+  // Python re 写 \U0001F000、JS RegExp 写 \u{1F000}（带 u 标志），转义语法不兼容，
+  // 所以共享文件里存的是码点区间，两端各自构建 —— 判定范围才真的对得上。
+  // 以前前端用代理对覆盖整个 astral plane、后端只覆盖 1F000-1FAFF，
+  // 存在「前端判违规、后端放行」的区间。
+  // 下面用 String.fromCharCode(92) 拼反斜杠，避免源码里的转义歧义。
+  var EMOJI_RE = (function () {
+    var bs = String.fromCharCode(92);
+    var parts = RULES.emoji_ranges.map(function (r) {
+      return bs + 'u{' + r[0].toString(16) + '}-' + bs + 'u{' + r[1].toString(16) + '}';
+    }).join('');
+    return new RegExp('[' + RULES.repeat_punct + ']{2,}|[' + parts + ']', 'u');
+  })();
 
   function byteLen(s) {
     var n = 0, str = s || '';
@@ -440,7 +412,8 @@
         issues.push({ level: 'warn', field: '标题', msg: '标题 ' + title.length + ' 字符，超过建议长度 ' + lim.titleSoft + '，移动端会被截断' });
       }
       if (title.length < lim.titleMin) issues.push({ level: 'warn', field: '标题', msg: '标题过短，关键词覆盖不足' });
-      if (/[!！]{2,}|[\uD800-\uDBFF][\uDC00-\uDFFF]|[\u2600-\u27BF★☆❤♥]/.test(title)) {
+      // 判定范围与 Python 后端同源（区间来自共享规则文件）
+      if (EMOJI_RE.test(title)) {
         issues.push({ level: 'error', field: '标题', msg: '标题含 emoji 或连续感叹号，平台禁止' });
       }
       if (lim.lang === 'en') {

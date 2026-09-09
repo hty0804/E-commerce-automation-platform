@@ -22,7 +22,10 @@ if (!window.matchMedia) {
     addEventListener() {}, removeEventListener() {} });
 }
 
-const files = ['assets/js/store.js', 'assets/js/ui.js', 'assets/js/views.js', 'assets/js/app.js'];
+// 直接从 index.html 里解析，不要在这里另维护一份顺序：
+// 新增脚本（比如 listing_rules.js）时漏改这里会直接炸，而炸在这里正是我们想要的。
+const files = [...html.matchAll(/<script src="([^"]+)"><\/script>/g)].map(m => m[1]);
+if (!files.length) { console.error('index.html 里没解析到任何 <script src>'); process.exit(1); }
 for (const f of files) {
   window.eval(fs.readFileSync(path.join(ROOT, f), 'utf8'));
 }
@@ -133,6 +136,36 @@ try {
   ok('runMonitor returns checked', r && typeof r.checked === 'number');
   ok('runMonitor returns anomalies[]', r && Array.isArray(r.anomalies));
 } catch (e) { ok('runMonitor', false); console.log('  -> ' + e.message + '\n' + e.stack); }
+
+/* ---------- 规则必须来自共享数据源，且与后端一致 ----------
+ * 前端曾经自己抄了一份违规词表，漏掉 best-seller / cure / 100% cure，
+ * 结果「前端显示校验通过、后端却拦截」。下面把这条钉死。 */
+const RULES = window.LISTING_RULES;
+ok('LISTING_RULES 已加载', !!RULES);
+if (RULES) {
+  ok('违规词与共享源数量一致(14)', RULES.banned_words.length === 14);
+  ['cure', 'best-seller', '100% cure'].forEach(function (w) {
+    ok('违规词表含 ' + w, RULES.banned_words.some(function (b) { return b[0] === w; }));
+  });
+  ok('类目 required 含 item_name(未过滤前)',
+    RULES.category_schema['3C数码'].required.indexOf('item_name') >= 0);
+}
+// 过滤掉顶层字段后，前端 required 不应再含 item_name / product_type
+ok('schemaForListing 过滤顶层字段', (function () {
+  const s = S.schemaForListing('3C数码');
+  return s && s.required.indexOf('item_name') < 0 && s.required.indexOf('product_type') < 0;
+})());
+// 真正的行为验证：标题里出现 cure 必须被判 error
+try {
+  const bad = S.validateListing(
+    { title: 'Acne Cure Gel Fast Treatment', bullets: [], description: '', keywords: [], attributes: {} },
+    'amazon', S.schemaForListing('3C数码'), {});
+  ok('标题含 cure 被判 error', bad.some(function (i) { return i.level === 'error' && /cure/i.test(i.msg); }));
+  const good = S.validateListing(
+    { title: 'Wireless Bluetooth Earbuds Waterproof Black', bullets: [], description: '', keywords: [], attributes: {} },
+    'amazon', S.schemaForListing('3C数码'), {});
+  ok('正常标题不报违规词', !good.some(function (i) { return /受限词/.test(i.msg); }));
+} catch (e) { ok('validateListing 违规词', false); console.log('  -> ' + e.message); }
 
 console.log('\n==== SMOKE TEST RESULT ====');
 console.log('PASS: ' + pass + '   FAIL: ' + fail);

@@ -16,6 +16,7 @@ listing_gen.py —— 上架环节用大模型生成 Listing(标题 / 五点 / �
 """
 import json
 import logging
+import os
 import re
 import time
 from typing import Any, Dict, List, Optional
@@ -29,108 +30,66 @@ log = logging.getLogger(__name__)
 # ============================================================
 # 1. 平台文案长度红线(校验用)
 # ============================================================
-LIMITS = {
-    "amazon": {
-        "title_max": 200,        # 多数类目硬上限 200 字符,实际建议 80~150
-        "title_min": 40,
-        "title_soft": 150,       # 超过只是警告,不阻塞
-        "bullet_max": 255,       # 每条五点硬上限
-        "bullet_count": 5,
-        "desc_max": 2000,
-        "keyword_bytes": 250,    # 后台搜索词总字节上限
-        "lang": "en",
-    },
-    "pdd": {
-        "title_max": 60,         # 拼多多商品标题建议 30~60 个汉字
-        "title_min": 8,
-        "title_soft": 60,
-        "bullet_max": 200,
-        "bullet_count": 5,
-        "desc_max": 1500,
-        "keyword_bytes": 250,
-        "lang": "zh",
-    },
-}
-
-# 平台明确禁止或高风险的表述(出现在标题/五点里会被 suppression 或降权)
-BANNED_WORDS = [
-    ("best seller", "平台禁止使用销量排名类表述"),
-    ("best-seller", "平台禁止使用销量排名类表述"),
-    ("#1", "平台禁止使用排名类表述"),
-    ("no.1", "平台禁止使用排名类表述"),
-    ("free shipping", "配送政策由平台决定,不能自行承诺"),
-    ("free gift", "赠品表述易触发合规审核"),
-    ("100% cure", "绝对化/医疗功效表述"),
-    ("fda approved", "未取得认证不得宣称"),
-    ("cure", "医疗功效表述(非个护类目慎用)"),
-    ("guarantee", "绝对化承诺,易触发合规审核"),
-    ("sale", "促销词不得出现在标题"),
-    ("promotion", "促销词不得出现在标题"),
-    ("clearance", "促销词不得出现在标题"),
-    ("cheap", "低质表述影响转化与权重"),
-]
-
 # ============================================================
-# 2. 类目 schema 兜底表
-# 真正的必填字段请以 SP-API getDefinitionsProductType 为准(见 fetch_product_type_definition),
-# 这里只作为"没拉到 schema 时"的兜底与生成提示。
+# 1. 平台文案长度红线 / 违规词 / 类目 schema
+#
+#    全部从 shared/listing_rules.json 加载 —— 前端用的是同一份文件。
+#    两端规则必须严格一致,否则会出现「前端显示校验通过、后端却拦截」的鬼打墙。
+#
+#    以前这里和 assets/js/store.js 各硬编码一份,并且**已经实际漂移过**:
+#    前端漏了 best-seller / cure / 100% cure 三个违规词,其中 cure 是
+#    医疗功效类合规高危词 —— 前端放行、后端拦截,用户根本不知道问题在哪。
 # ============================================================
+_RULES_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "shared", "listing_rules.json"
+)
+
+
+def _load_rules() -> dict:
+    """
+    加载共享规则。
+
+    文件缺失必须大声报错:静默回退成一份内置副本,等于把"两端漂移"这个
+    已经踩过的坑重新埋回去,而且这次会更难发现。
+    """
+    try:
+        with open(_RULES_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        raise RuntimeError(
+            "找不到共享规则文件: " + os.path.normpath(_RULES_PATH)
+            + " —— 它是 Listing 生成与校验的唯一数据源,不要删除或移动。"
+        )
+    except json.JSONDecodeError as e:
+        raise RuntimeError(
+            "共享规则文件不是合法 JSON: " + os.path.normpath(_RULES_PATH) + " —— " + str(e)
+        )
+
+
+_RULES = _load_rules()
+
+LIMITS: Dict[str, Dict[str, Any]] = _RULES["limits"]
+BANNED_WORDS: List[tuple] = [tuple(x) for x in _RULES["banned_words"]]
 CATEGORY_SCHEMA: Dict[str, Dict[str, Any]] = {
-    "3C数码": {
-        "product_type": "ELECTRONIC_DEVICE",
-        "item_type_keyword": "electronics",
-        "required": ["item_name", "brand", "product_type", "color", "power_source"],
-        "recommended": ["connectivity_technology", "compatible_devices", "wattage",
-                        "battery_capacity", "warranty_description", "item_weight"],
-        "browse_hint": "Electronics > Computers & Accessories / Cell Phones & Accessories",
-    },
-    "家居厨房": {
-        "product_type": "HOME_PRODUCT",
-        "item_type_keyword": "home",
-        "required": ["item_name", "brand", "product_type", "color", "material"],
-        "recommended": ["item_dimensions", "item_weight", "capacity", "is_dishwasher_safe",
-                        "care_instructions", "number_of_pieces"],
-        "browse_hint": "Home & Kitchen > Kitchen & Dining",
-    },
-    "户外运动": {
-        "product_type": "SPORTING_GOODS",
-        "item_type_keyword": "outdoor",
-        "required": ["item_name", "brand", "product_type", "color", "material"],
-        "recommended": ["item_weight", "item_dimensions", "sport_type", "water_resistance_level",
-                        "capacity", "included_components"],
-        "browse_hint": "Sports & Outdoors > Outdoor Recreation",
-    },
-    "个护健康": {
-        "product_type": "BEAUTY_PRODUCT",
-        "item_type_keyword": "personal-care",
-        "required": ["item_name", "brand", "product_type", "item_form", "material"],
-        "recommended": ["skin_type", "scent", "volume", "target_gender", "is_sensitive_skin_safe"],
-        "browse_hint": "Beauty & Personal Care",
-    },
-    "母婴玩具": {
-        "product_type": "TOY",
-        "item_type_keyword": "toy",
-        "required": ["item_name", "brand", "product_type", "color", "manufacturer_minimum_age"],
-        "recommended": ["material", "item_dimensions", "item_weight", "educational_objective",
-                        "batteries_required", "safety_warning"],
-        "browse_hint": "Toys & Games",
-    },
-    "服饰配饰": {
-        "product_type": "APPAREL",
-        "item_type_keyword": "apparel",
-        "required": ["item_name", "brand", "product_type", "color", "size", "material"],
-        "recommended": ["fabric_type", "care_instructions", "fit_type", "target_gender",
-                        "style", "occasion"],
-        "browse_hint": "Clothing, Shoes & Jewelry",
-    },
+    k: v for k, v in _RULES["category_schema"].items() if not k.startswith("_")
 }
-DEFAULT_SCHEMA = {
-    "product_type": "PRODUCT",
-    "item_type_keyword": "product",
-    "required": ["item_name", "brand", "product_type"],
-    "recommended": ["color", "material", "item_dimensions", "item_weight"],
-    "browse_hint": "请先确认类目节点",
-}
+DEFAULT_SCHEMA: Dict[str, Any] = _RULES["default_schema"]
+
+
+def _emoji_pattern() -> str:
+    r"""
+    由码点区间构建 emoji 正则。
+
+    Python re 用 \U0001F000、JS RegExp 用 \u{1F000}(带 u 标志),转义语法不兼容,
+    所以共享文件里存的是**码点区间**,两端各自构建 —— 这样判定范围才真的对得上。
+    以前两端各写一段:前端用代理对覆盖整个 astral plane,后端只覆盖 1F000-1FAFF,
+    于是存在"前端判违规、后端放行"的区间。
+    """
+    parts = "".join(f"{chr(lo)}-{chr(hi)}" for lo, hi in _RULES["emoji_ranges"])
+    return f"[{_RULES['repeat_punct']}]{{2,}}|[{parts}]"
+
+
+_EMOJI_RE = re.compile(_emoji_pattern())
 
 
 def schema_for(category: str) -> Dict[str, Any]:
@@ -138,15 +97,7 @@ def schema_for(category: str) -> Dict[str, Any]:
 
 
 # 必填属性没给值时的保守默认值。会被 validate 标成"待确认"，别当成最终答案直接上架。
-ATTR_DEFAULTS = {
-    "power_source": "Battery Powered",
-    "material": "Durable Material",
-    "size": "One Size",
-    "item_form": "Solid",
-    "manufacturer_minimum_age": "36",
-    "color": "As Shown",
-    "brand": "Generic",
-}
+ATTR_DEFAULTS: Dict[str, str] = _RULES["attr_defaults"]
 
 
 def fetch_product_type_definition(product_type: str, marketplace_id: Optional[str] = None) -> Optional[dict]:
@@ -307,36 +258,8 @@ def llm_generate(product: Dict, platform: str = "amazon", schema: Optional[Dict]
 
 
 # --- 规则兜底：不配 Key 也能出一份能用的草稿 -------------------
-_CN2EN = [
-    ("无线蓝牙耳机", "Wireless Bluetooth Earbuds"), ("蓝牙耳机", "Bluetooth Earbuds"),
-    ("降噪", "Noise Cancelling"), ("主动降噪", "Active Noise Cancelling"),
-    ("超长续航", "Long Battery Life"), ("续航", "Battery Life"),
-    ("防水", "Waterproof"), ("防摔", "Shockproof"), ("硅胶", "Silicone"),
-    ("手机壳", "Phone Case"), ("保护壳", "Protective Case"), ("全包", "Full Coverage"),
-    ("保温杯", "Insulated Tumbler"), ("不锈钢", "Stainless Steel"), ("大容量", "Large Capacity"),
-    ("台灯", "Desk Lamp"), ("护眼", "Eye-Caring"), ("调光", "Dimmable"),
-    ("充电", "Rechargeable"), ("快充", "Fast Charging"), ("便携", "Portable"),
-    ("车载", "Car"), ("吸尘器", "Vacuum Cleaner"), ("无线", "Wireless"),
-    ("四件套", "Bedding Set"), ("纯棉", "100% Cotton"), ("床上用品", "Bedding"),
-    ("加厚", "Thickened"), ("折叠", "Foldable"), ("收纳", "Storage"),
-    ("厨房", "Kitchen"), ("户外", "Outdoor"), ("运动", "Sports"),
-    ("健身", "Fitness"), ("瑜伽", "Yoga"), ("露营", "Camping"),
-    ("儿童", "Kids"), ("婴儿", "Baby"), ("玩具", "Toy"),
-    ("套装", "Set"), ("升级", "Upgraded"), ("款", ""),
-    # 通用规格
-    ("黑色", "Black"), ("白色", "White"), ("灰色", "Grey"), ("蓝色", "Blue"),
-    ("红色", "Red"), ("绿色", "Green"), ("粉色", "Pink"), ("透明", "Clear"),
-    ("大号", "Large"), ("中号", "Medium"), ("小号", "Small"),
-    ("英寸", "inch"), ("厘米", "cm"), ("毫安", "mAh"), ("瓦", "W"),
-]
-_SCENE_BY_CATEGORY = {
-    "3C数码": "for Daily Commute and Travel",
-    "家居厨房": "for Home Kitchen and Daily Use",
-    "户外运动": "for Camping, Hiking and Outdoor Activities",
-    "个护健康": "for Daily Personal Care",
-    "母婴玩具": "for Kids and Family Fun",
-    "服饰配饰": "for Everyday Wear",
-}
+_CN2EN: List[tuple] = [tuple(x) for x in _RULES["cn2en"]]
+_SCENE_BY_CATEGORY: Dict[str, str] = _RULES["scene_by_category"]
 
 
 def _strip_cjk(s: str) -> str:
@@ -502,8 +425,8 @@ def validate(listing: Dict, platform: str = "amazon", schema: Optional[Dict] = N
                            "msg": f"标题 {len(title)} 字符，超过建议长度 {lim['title_soft']}，移动端会被截断"})
         if len(title) < lim["title_min"]:
             issues.append({"level": "warn", "field": "title", "msg": "标题过短，关键词覆盖不足"})
-        # Python re 不支持 \p{...}，这里显式列出常见 emoji 与符号区间
-        if re.search(r"[!！]{2,}|[\U0001F000-\U0001FAFF☀-➿←-⇿★☆❤♥]", title):
+        # emoji 判定范围与前端严格一致(区间来自共享规则文件)
+        if _EMOJI_RE.search(title):
             issues.append({"level": "error", "field": "title", "msg": "标题含 emoji 或连续感叹号，平台禁止"})
         if lim["lang"] == "en":
             # 品牌名本身是中文/非拉丁字符很常见(注册商标),不算问题
