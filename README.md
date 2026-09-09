@@ -91,7 +91,9 @@ JS 写 `\u{1F000}`（带 `u` 标志），转义语法不兼容，各自从同一
 
 ## 异常检测逻辑
 
-与 `python_backend/anomaly_detector.py` 完全一致：
+与 `python_backend/anomaly_detector.py` 完全一致。分两道闸：**环比触发，基线复核**。
+
+### 第一道：环比
 
 ```
 change_ratio = (current - previous) / previous
@@ -103,10 +105,36 @@ direction = "both"  → |change_ratio| >= threshold 时告警（价格）
 `threshold` 是**比例**不是百分比：`0.3` 表示 30%，别写成 `30`。
 传 `drop / rise / both` 之外的值会打 warning 并回退为 `drop`，不会静默失效。
 
-三档防误报：
+### 第二道：同时段基线复核
+
+光靠环比会天天误报，因为**上一小时本身可能就不正常**：凌晨 2 点做闪购冲到 80 单，
+3 点回落到常态的 30 单，环比就是 -62%，每天这个点来一条假告警。报多了人就再也不看告警了 ——
+一个被忽略的告警系统比没有更糟，因为它给的是虚假的安全感。
+
+所以环比判定异常后，还要拿「最近 N 天**同一时段**的中位数」当基线再核一遍：
+30 单 vs 基线 28 单 = 正常波动，抑制掉。真断货时（常态 28 单突然掉到 2 单）相对基线也是暴跌，不会被误杀。
+
+- 用**中位数**不用平均数：一两次促销/断货会把均值拉偏，中位数对离群值不敏感。
+- 样本不足 / 历史库不可用 / 基线为 0 → **一律放行**。
+  宁可多报，也不能因为数据不够而漏掉真异常。
+- 被抑制的项会打进监控日志（`[baseline] ...`）。抑制了什么必须可见，
+  否则「告警变少了」到底是降噪成功还是检测坏了，你根本分不清。
+
+相关配置（`python_backend/config.py`，均可用环境变量覆盖）：
+
+| 配置项 | 默认 | 说明 |
+| --- | --- | --- |
+| `BASELINE_ENABLED` | `true` | 关掉就退回纯环比 |
+| `BASELINE_LOOKBACK_DAYS` | `7` | 回看多少天 |
+| `BASELINE_MIN_SAMPLES` | `3` | 少于这个样本数就不做基线、直接放行 |
+| `BASELINE_TOLERANCE` | `1.0` | 与阈值同口径；`0.8` 更敏感，`1.2` 更保守 |
+| `HISTORY_RETENTION_DAYS` | `90` | 历史保留天数，每天凌晨那轮自动清理 |
+
+### 四档防误报
 
 - `current is None`（这轮没取到数）→ 不告警、也不写进基线。数据缺失 ≠ 跌到 0。
 - `previous < min_previous` → 不做环比。否则「1 单 → 0 单」就是 -100%，夜间必误报。
+- 相对同时段基线属正常波动 → 抑制（见上）。
 - 库存按 **SKU 维度逐项检测**，避免个别 SKU 暴跌被平台总量平均掉。
 
 降幅达到阈值 2 倍判定为「严重」，否则为「警告」。
@@ -148,9 +176,11 @@ npm install        # 安装 jsdom 开发依赖
 npm test          # 等价于 node smoke_test.js，应输出 PASS: 38  FAIL: 0
 
 # 2) Python 后端回归测试（不需要装任何依赖，测试内部用桩替换 requests/botocore）
-python -m unittest discover -s python_backend/tests -v   # 52 项，覆盖历次修复的 bug
+python -m unittest discover -s python_backend/tests -v   # 68 项，覆盖历次修复的 bug
 #    其中 test_rules_sync.py 专门盯「前后端规则是否同源」，改了 shared/ 但忘了
 #    重跑 tools/gen_listing_rules.py 会在这里失败
+#    test_history.py 盯基线对比；其中被抑制的用例都配了反向验证
+#    （关掉基线后同一份数据必须重新告警，否则说明基线是死代码）
 #   或：npm run test:py      （需本机有 python 命令）
 #   跑全部：npm run test:all
 
@@ -159,6 +189,21 @@ cd python_backend
 pip install -r requirements.txt
 python main.py --help
 ```
+
+### 查指标历史（基线用）
+
+每轮监控会把各指标取值写进 `python_backend/history.db`（SQLite，只追加不修改）。
+新部署后要先跑几轮攒样本，基线对比才会生效——样本不够时系统**不会**抑制任何告警。
+
+```bash
+python main.py history series                     # 列出所有指标序列与样本数
+python main.py history recent amazon stock:S1 20  # 某指标最近的取值
+python main.py history baseline amazon orders     # 该指标当前时段的基线值
+python main.py history prune                      # 清理超过保留期的历史
+```
+
+排查「为什么没告警」时先看 `series`：样本数为 0 说明历史还没攒起来，
+基线压根没参与判断，此时的告警行为就是纯环比。
 
 推送到 GitHub 后会自动跑 [CI](./.github/workflows/ci.yml)：三个 Python 版本编译检查 + 回归测试，
 以及前端冒烟测试。

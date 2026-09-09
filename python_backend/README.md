@@ -6,20 +6,32 @@
 ## 目录结构
 
 ```
-ecommerce_monitor/
+python_backend/
 ├── config.py             # 所有密钥/阈值配置(从环境变量读取)
 ├── amazon_client.py      # 亚马逊 SP-API 客户端(鉴权 + 上架 + 库存/订单查询)
 ├── pdd_client.py         # 拼多多开放平台客户端(签名 + 上架 + 商品/订单查询)
-├── anomaly_detector.py   # 环比 + 阈值异常检测,状态存在 state.json
+├── anomaly_detector.py   # 异常检测:环比触发 + 同时段基线复核
+├── history.py            # 指标历史库(SQLite,只追加),为基线提供"历史同时段"数据
 ├── incident.py           # 异常分类(规则) + 大模型处理建议(可选)
 ├── listing_gen.py        # 大模型生成 Listing:标题/五点/描述/关键词 + 类目属性补全
 ├── alerts.py             # 企业微信 / 钉钉群机器人告警
-├── main.py               # 主入口:monitor / daemon / genlist
+├── main.py               # 主入口:monitor / health / daemon / genlist / history
 ├── listing_input.example.json  # genlist 的输入格式示例
 ├── PERFORMANCE.md        # 大 SKU 量下的容量测算与优化策略
 ├── requirements.txt
 └── README.md
 ```
+
+**两个状态文件各管各的，别混淆：**
+
+| 文件 | 存什么 | 为什么分开 |
+| --- | --- | --- |
+| `state.json` | 每个指标的**上一次取值**、同步游标、LLM 冷却、上架幂等 | 这些都是"当前状态"，只在文件锁保护下做读-改-写 |
+| `history.db` | 每个指标的**全部历史取值** | 只追加不修改，用来算"历史同时段基线" |
+
+`state.json` 每个 key 只存上一次的值，历史全丢，所以光靠它做不了同比 ——
+这也是为什么历史单独用 SQLite 存，而不是把 state.json 整个迁过去：
+迁过去要动游标/冷却/幂等这些已经在文件锁下并发安全的东西，纯属增加风险、没有收益。
 
 ## 1. 安装依赖
 
@@ -151,5 +163,11 @@ ORDER_COUNT_DROP_THRESHOLD = 0.5  # 每小时订单量环比下降超过 50% 告
 - 亚马逊 SP-API 和拼多多开放平台的接口字段、限流规则会不定期调整,正式接入前请对照官方最新文档核对:
   - 亚马逊: https://developer-docs.amazon.com/sp-api/
   - 拼多多: https://open.pinduoduo.com/application/document/api
-- 当前异常检测是简单的「环比阈值」逻辑,数据量变大后建议换成时序数据库 + 移动平均/同比的方式,减少误报。
-- `state.json` 只是本地文件存储,如果部署在多台机器或者容器会重启丢盘的环境,建议换成 Redis 或数据库存状态。
+- 异常检测是「环比触发 + 同时段基线复核」两道闸,不是单点环比;
+  误报仍然可能有(比如这个时段历史上本来就波动很大),
+  真要再降一档可以接时序数据库做移动平均/季节性分解。
+- `state.json` 和 `history.db` 都是**单机本地文件**。
+  如果部署在多台机器,或容器会重启丢盘,建议换成 Redis(存状态)+ 时序库(存历史);
+  多台机器各写各的本地库会让各自的基线都不完整。
+- 基线需要**攒样本**:新部署或新增 SKU 后,前 `BASELINE_MIN_SAMPLES` 轮不会抑制任何告警
+  (样本不足一律放行)。这段时间的告警行为等同于纯环比,属于预期表现。
