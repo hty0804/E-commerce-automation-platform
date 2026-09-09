@@ -14,6 +14,7 @@ import json
 import os
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
@@ -155,6 +156,49 @@ class TestHistoryStore(_HistoryCase):
         deleted = history.prune(retention_days=90)
         self.assertEqual(deleted, 1)
         self.assertEqual([v for _, v in history.recent("amazon", "orders")], [20])
+
+    def test_connection_not_reused_across_db_paths(self):
+        """
+        库路径变了必须换连接。
+
+        连接是按线程复用的,如果不管路径直接复用,切库后会读写到**上一个库** ——
+        测试里表现为用例之间数据串了,生产里表现为"A 环境的基线跑到 B 环境去了"。
+        这种串数据的 bug 没有报错、只有结果不对,极难排查,所以必须钉死。
+        """
+        history.record("amazon", "k", 1)
+        self.assertEqual([v for _, v in history.recent("amazon", "k")], [1])
+
+        other_db = os.path.join(self.tmp, "second.db")
+        with mock.patch.object(config, "HISTORY_DB", other_db):
+            self.assertEqual(history.recent("amazon", "k"), [],
+                             "换库后不该看到旧库的数据")
+            history.record("amazon", "k", 2)
+            self.assertEqual([v for _, v in history.recent("amazon", "k")], [2])
+
+        # 切回原库,原来的数据还在,且没被第二个库污染
+        self.assertEqual([v for _, v in history.recent("amazon", "k")], [1])
+
+    def test_usable_from_another_thread(self):
+        """
+        别的线程里也要能用。
+
+        sqlite3 连接默认禁止跨线程使用(check_same_thread),一用就抛
+        ProgrammingError。连接缓存用 thread-local 正是为了规避这点 ——
+        但那只是"应该没事",这里真的开个线程跑一遍才算数。
+        """
+        outcome = []
+
+        def worker():
+            try:
+                history.record("amazon", "k", 7)
+                outcome.append([v for _, v in history.recent("amazon", "k")])
+            except Exception as e:  # noqa: BLE001
+                outcome.append(e)
+
+        t = threading.Thread(target=worker)
+        t.start()
+        t.join(timeout=10)
+        self.assertEqual(outcome, [[7]], f"子线程里应能正常读写,实际: {outcome}")
 
     def test_unavailable_degrades_gracefully(self):
         """
