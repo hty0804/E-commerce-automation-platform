@@ -54,6 +54,7 @@ class _HistoryCase(unittest.TestCase):
             mock.patch.object(config, "BASELINE_ENABLED", True),
             mock.patch.object(config, "BASELINE_MIN_SAMPLES", 3),
             mock.patch.object(config, "BASELINE_LOOKBACK_DAYS", 7),
+            mock.patch.object(config, "BASELINE_MATCH_DOW", True),
             mock.patch.object(config, "BASELINE_TOLERANCE", 1.0),
         ]
         for p in self._p:
@@ -250,6 +251,15 @@ class TestDayOfWeek(_HistoryCase):
                                    lookback_days=28, match_dow=True)
         self.assertEqual(n, 3)
         self.assertEqual(base, 20, "同星期几的样本才该进基线")
+
+    def test_seven_day_weekday_window_is_insufficient(self):
+        """7 天回看只会命中上一周同一天,不足 min_samples 时必须放行。"""
+        now = time.time()
+        history.record("amazon", "orders", 20, ts=now - 7 * DAY)
+        base, n = history.baseline("amazon", "orders", ts=now,
+                                   lookback_days=7, match_dow=True)
+        self.assertIsNone(base)
+        self.assertEqual(n, 1)
 
     def test_falls_back_when_same_weekday_samples_insufficient(self):
         """

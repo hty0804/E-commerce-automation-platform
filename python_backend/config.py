@@ -152,6 +152,8 @@ HISTORY_FOCUS_ONLY = _bool("HISTORY_FOCUS_ONLY", False)
 # 基线对比是拿"历史上同一时段的正常水平"做参照,这种抖动就能被正确抑制。
 BASELINE_ENABLED = _bool("BASELINE_ENABLED", True)
 # 回看天数:取最近 N 天、同一小时(±1 小时窗口)的样本取中位数。
+# 默认区分星期几时,7 天只会拿到同一星期几的 1 条样本,通常达不到最少 3 条;
+# 生产环境建议通过环境变量设为 28 天左右,约有 4 条样本,还能容忍一两次采集缺失。
 BASELINE_LOOKBACK_DAYS = _int("BASELINE_LOOKBACK_DAYS", 7)
 # 样本不足时不做基线判断,退回纯环比 —— 宁可不抑制,也不要误抑制真异常。
 BASELINE_MIN_SAMPLES = _int("BASELINE_MIN_SAMPLES", 3)
@@ -164,8 +166,8 @@ BASELINE_TOLERANCE = _float("BASELINE_TOLERANCE", 1.0)
 # 是否要求"星期几也相同"。跨境电商周末和工作日的订单节奏差别很大,
 # 拿工作日的量去衡量周末会系统性误判。
 # ⚠️ 开启后样本会少一大截(7 天回看里每个星期几只有 1 条),
-#    所以建议把 BASELINE_LOOKBACK_DAYS 提到 28 天左右(每个星期几约 4 条)。
-#    样本不够时会自动降级为"不挑星期几",不会因此失效 —— 见 history.baseline_with_fallback。
+#    所以默认回看 28 天左右(每个星期几约 4 条),还能容忍一两次采集缺失。
+#    样本不够时会自动降级为更粗的口径,不会静默漏报 —— 见 history.baseline_with_fallback。
 BASELINE_MATCH_DOW = _bool("BASELINE_MATCH_DOW", True)
 
 # ------------------ 日志 ------------------
