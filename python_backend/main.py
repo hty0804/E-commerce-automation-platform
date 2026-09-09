@@ -263,6 +263,30 @@ def _next_inventory_window(now: datetime.datetime):
     return _utc_iso(start), "增量"
 
 
+def _handle_inventory_sync_result(by_sku: dict, summaries, start_dt, now: datetime.datetime,
+                                  error_messages: list) -> None:
+    """
+    处理库存结果并决定是否推进增量游标。
+
+    空结果的含义取决于模式:
+    - 全量模式没有 SKU:数据缺失,需要告警且保留游标;
+    - 增量模式没有 SKU 且分页完整:本窗口没有变更,是正常结果,必须推进游标;
+    - 分页不完整:无论是否有 SKU 都不能推进,避免漏掉后续未拉到的页面。
+    """
+    if not getattr(summaries, "complete", True):
+        # 翻页被 max_pages 截断:数据不完整,**绝不能**推进同步游标。
+        # 否则下一轮增量从"现在"开始,没拉到的那批 SKU 就永远不会被增量覆盖。
+        error_messages.append(
+            f"⚠️ 亚马逊库存翻页达到上限 {config.INVENTORY_MAX_PAGES} 页,本轮数据不完整,"
+            f"已保留同步游标不推进。请调大 INVENTORY_MAX_PAGES,或改用 Reports API 做全量对账。"
+        )
+    elif not by_sku and start_dt is None:
+        # 只有全量模式的空结果才是异常;增量空结果表示窗口内没有 SKU 发生变化。
+        error_messages.append("⚠️ 亚马逊本轮未获取到任何库存数据,请检查授权或接口状态")
+    else:
+        anomaly_detector.set_sync_cursor("amazon_inventory", _utc_iso(now))
+
+
 def run_hourly_monitor() -> None:
     started = time.time()
     now = datetime.datetime.now(datetime.timezone.utc)
@@ -304,19 +328,7 @@ def run_hourly_monitor() -> None:
             })
         stats["amazon_skus"] = len(by_sku)
 
-        # 一轮下来一个 SKU 都没拿到,通常是接口/权限出了问题,不要当成"一切正常"
-        if not by_sku:
-            error_messages.append("⚠️ 亚马逊本轮未获取到任何库存数据,请检查授权或接口状态")
-        elif not getattr(summaries, "complete", True):
-            # 翻页被 max_pages 截断:数据不完整,**绝不能**推进同步游标。
-            # 否则下一轮增量从"现在"开始,没拉到的那批 SKU 就永远不会被增量覆盖,
-            # 表现为"静默地少监控一批货",而且不报错、不告警。
-            error_messages.append(
-                f"⚠️ 亚马逊库存翻页达到上限 {config.INVENTORY_MAX_PAGES} 页,本轮数据不完整,"
-                f"已保留同步游标不推进。请调大 INVENTORY_MAX_PAGES,或改用 Reports API 做全量对账。"
-            )
-        else:
-            anomaly_detector.set_sync_cursor("amazon_inventory", _utc_iso(now))
+        _handle_inventory_sync_result(by_sku, summaries, start_dt, now, error_messages)
 
         # 订单:getOrders 限流极低(约 1 次/分钟),一小时一次是安全的,别再提高频率
         one_hour_ago = _utc_iso(now - datetime.timedelta(hours=1))

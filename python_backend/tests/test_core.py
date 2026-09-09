@@ -11,6 +11,7 @@
     (取值、取整、分类、加锁、去重、截断)。用桩替换掉网络层,测试才能在没有
     API 密钥、没有网络的环境中稳定复现问题 —— 这正是回归测试该有的样子。
 """
+import datetime
 import os
 import sys
 import tempfile
@@ -241,6 +242,41 @@ class TestStateLock(Base):
 
 class TestPagedResult(Base):
     """P1-6:翻页截断必须能被调用方感知"""
+
+    def test_incremental_empty_result_advances_cursor(self):
+        """增量窗口完整返回空列表 = 没有变更,应推进游标且不报数据缺失。"""
+        now = datetime.datetime.now(datetime.timezone.utc)
+        errors = []
+        with mock.patch.object(anomaly_detector, "set_sync_cursor") as set_cursor:
+            main._handle_inventory_sync_result(
+                {}, amazon_client.PagedResult([], complete=True),
+                "2026-09-09T15:00:00Z", now, errors)
+        self.assertEqual(errors, [])
+        set_cursor.assert_called_once_with("amazon_inventory", main._utc_iso(now))
+
+    def test_full_empty_result_keeps_cursor_and_reports_missing(self):
+        """全量窗口空列表仍表示数据缺失,不能借空结果推进游标。"""
+        now = datetime.datetime.now(datetime.timezone.utc)
+        errors = []
+        with mock.patch.object(anomaly_detector, "set_sync_cursor") as set_cursor:
+            main._handle_inventory_sync_result(
+                {}, amazon_client.PagedResult([], complete=True),
+                None, now, errors)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("未获取到任何库存数据", errors[0])
+        set_cursor.assert_not_called()
+
+    def test_incomplete_empty_result_keeps_cursor(self):
+        """即使没有返回 SKU,分页不完整也必须优先报告截断并保留游标。"""
+        now = datetime.datetime.now(datetime.timezone.utc)
+        errors = []
+        with mock.patch.object(anomaly_detector, "set_sync_cursor") as set_cursor:
+            main._handle_inventory_sync_result(
+                {}, amazon_client.PagedResult([], complete=False),
+                "2026-09-09T15:00:00Z", now, errors)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("数据不完整", errors[0])
+        set_cursor.assert_not_called()
 
     def test_complete_flag(self):
         r = amazon_client.PagedResult([1, 2, 3], complete=False)
