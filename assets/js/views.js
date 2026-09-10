@@ -218,6 +218,7 @@
       }).catch(function (e) { imageLibraryState.loading = false; imageLibraryState.error = e.message || '请求图片库失败'; App.refresh(); });
     },
     mark: function (id, gallery) {
+      var self = this;
       var guidance = gallery === 'hot' ? prompt('填写这张爆款图的视觉锚点（可选）', '柔和暖光; 构图留白; 产品主体突出') : '';
       if (gallery === 'hot' && guidance === null) return;
       imageApi('/api/images/' + id + '/mark', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ gallery: gallery, style_guidance: guidance || '' }) }).then(function () {
