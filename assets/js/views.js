@@ -729,7 +729,7 @@
         if (!subject) { U.toast('warn', '请填写商品主体'); return false; }
         btn.disabled = true; btn.textContent = '生成中...';
         setTimeout(function () { listing.makeMockImages({ subject: subject, style: style, count: count, listing: r.listing }); }, 700);
-        return false;
+        return true;
       }});
     },
     makeMockImages: function (args) {
