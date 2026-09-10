@@ -10,9 +10,10 @@
     POST /api/images/{id}/mark  {"gallery":"hot", "style_guidance":"柔和暖光; 右侧留白"}
     DELETE /api/images/{id}
     GET  /media/{file_name}
+    GET  /health
 
 这是轻量 stdlib 服务，不引入 Flask；前端若 API 不可用会显示明确离线态，
-不会把假数据伪装成真实图库。
+不会把假数据伪装成真实图库。部署平台会注入 PORT，服务必须监听 0.0.0.0:$PORT。
 """
 import json
 import logging
@@ -78,6 +79,9 @@ class ImageAPIHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
         query = parse_qs(parsed.query)
+        if path == "/health":
+            _json_response(self, 200, {"ok": True, "service": "image-library-api"})
+            return
         if path == "/api/images":
             try:
                 rows = image_library.list_assets(
@@ -175,8 +179,9 @@ class ImageAPIHandler(BaseHTTPRequestHandler):
 
 
 def serve(host=None, port=None):
-    host = host or getattr(config, "IMAGE_API_HOST", "127.0.0.1")
-    port = int(port or getattr(config, "IMAGE_API_PORT", 8765))
+    # 云平台通过 PORT 注入监听端口；本地未注入时仍用 8765。
+    host = host or os.getenv("PORT") and "0.0.0.0" or getattr(config, "IMAGE_API_HOST", "127.0.0.1")
+    port = int(port or os.getenv("PORT") or getattr(config, "IMAGE_API_PORT", 8765))
     server = ThreadingHTTPServer((host, port), ImageAPIHandler)
     log.info("图片库 API 已启动: http://%s:%s", host, port)
     try:

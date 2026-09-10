@@ -187,7 +187,7 @@
     title: '图片库', desc: '查看生图结果，人工筛选并让爆款风格反哺后续生图',
     render: function () {
       var st = imageLibraryState, stats = st.stats || { total: 0, unclassified: 0, hot: 0, normal: 0 };
-      if (st.error) return '<div class="card"><div class="offline-state">' + U.icon('plug', 32) + '<h3>图片库 API 未连接</h3><p>' + esc(st.error) + '</p><p class="hint">请启动 <code>python python_backend/image_api.py</code>，并在系统设置中填写 API 地址。</p></div></div>';
+      if (st.error) return '<div class="card"><div class="offline-state">' + U.icon('plug', 32) + '<h3>图片库 API 未连接</h3><p>' + esc(st.error) + '</p><p class="hint">请启动 <code>python python_backend/image_api.py</code>，或在系统设置中填写公网 API 地址。</p></div></div>';
       var items = st.items || [];
       return '<div class="grid grid-4 mb16 image-stats">' +
         '<div class="card stat-card"><div class="cell-sub">待人工筛选</div><b>' + stats.unclassified + '</b></div>' +

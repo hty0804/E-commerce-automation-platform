@@ -643,7 +643,7 @@
       skipOnError: true
     };
     settings.imageLibrary = {
-      apiBaseUrl: 'http://127.0.0.1:8765'
+      apiBaseUrl: 'https://629ff8cd6f86472a8e2792ea8a8a3ee9.sg2.agentos-app.run'
     };
     return {
       version: 3,
@@ -688,7 +688,7 @@
     if (!d.settings.listing) {
       d.settings.listing = { brand: '', platform: 'amazon', autoPublish: false, skipOnError: true };
     }
-    if (!d.settings.imageLibrary) d.settings.imageLibrary = { apiBaseUrl: 'http://127.0.0.1:8765' };
+    if (!d.settings.imageLibrary) d.settings.imageLibrary = { apiBaseUrl: 'https://629ff8cd6f86472a8e2792ea8a8a3ee9.sg2.agentos-app.run' };
     d.version = 3;
     addLog('info', 'system', '数据已升级到 v3：新增 AI 生成 Listing');
   }
@@ -702,7 +702,7 @@
     else {
       if (!db.version || db.version < 2) { migrate(db); save(); }
       if (db.version < 3) { migrateV3(db); save(); }
-      if (!db.settings.imageLibrary) { db.settings.imageLibrary = { apiBaseUrl: 'http://127.0.0.1:8765' }; save(); }
+      if (!db.settings.imageLibrary) { db.settings.imageLibrary = { apiBaseUrl: 'https://629ff8cd6f86472a8e2792ea8a8a3ee9.sg2.agentos-app.run' }; save(); }
     }
     return db;
   }

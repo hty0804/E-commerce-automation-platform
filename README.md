@@ -318,7 +318,13 @@ req = image_gen.build_image_request({
 python python_backend/image_api.py
 ```
 
-默认监听 `127.0.0.1:8765`。登录控制台后，在「系统设置 → 图片库 API」填写地址（默认已填 `http://127.0.0.1:8765`），然后打开左侧「图片库」。
+本项目已提供一份公网 API 实例：
+
+```text
+https://629ff8cd6f86472a8e2792ea8a8a3ee9.sg2.agentos-app.run
+```
+
+登录控制台后，在「系统设置 → 图片库 API」填写地址，然后打开左侧「图片库」。本地运行时也可以使用 `http://127.0.0.1:8765`。
 
 接口：
 
@@ -332,6 +338,8 @@ python python_backend/image_api.py
 | GET | `/media/{file_name}` | 读取本地转存图片 |
 
 默认 API 不可连接时，前端显示明确「图片库 API 未连接」状态，不会用假数据冒充真实图库。`/media/` 只允许图片文件 basename，阻止路径穿越；CORS、端口和监听地址可通过 `IMAGE_API_CORS_ORIGINS` / `IMAGE_API_PORT` / `IMAGE_API_HOST` 配置。
+
+> 公网实例当前是空图库，图片文件与 SQLite 数据不会从本地开发环境自动同步过去。要把真实生成图放进去，需要在同一公网后端环境运行「生图 → 转存 → 注册图库」流程；当前公网 API 已先验证 `/health` 和 `/api/images/stats` 均返回 200。
 
 自检脚本加了 `--save`，一次跑通「真实生图 → 下载落盘」：
 
