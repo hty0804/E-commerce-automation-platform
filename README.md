@@ -228,6 +228,48 @@ out = image_gen.run_with_image_tool(
 > 和 `_extract_images()`，其余逻辑不用动。响应解析已兼容 `data[].url` /
 > `data[].b64_json` / `data[].error` / `images[]` 几种形状。
 
+### 图片转存（`python_backend/image_store.py`）
+
+方舟的图片 URL 只有 24 小时有效期，**生完必须立刻下载落盘**，图库存本地路径、不存 URL。
+这是延迟爆炸型故障：生成当时一切正常，过一天才坏，排查时根本想不到是 URL 过期。
+
+```python
+res  = image_gen.generate(image_gen.build_image_request({...}))
+saved = image_store.store_generated(res)   # 下载 + 落盘 + 写 sidecar
+
+saved["count"]          # 成功几张
+saved["saved"][0]["path"]  # 本地绝对路径
+saved["failed"]         # 失败清单(带原因,不会抛异常)
+```
+
+每个文件旁边会写一个同名 `.json` 的 sidecar，记下风格、商品主体、卖点、提示词、来源、
+sha256、时间。没有它，磁盘上就是一堆没来历的孤儿文件 —— 做人工筛选时你连
+「这张是什么风格、给哪个商品出的」都答不上来，而这正是筛选时最需要的两条信息。
+图库直接扫目录就能建索引：`image_store.list_stored()`。
+
+几个实现上的取舍：
+
+- **文件名带内容哈希**（sha256 前 12 位）：同一张图重复生成只存一份，重跑不会把图库撑爆
+- **扩展名不信 URL**：看 `Content-Type`，看不出来再嗅文件头魔数。URL 写 `.jpg`
+  实际是 png 很常见，存错扩展名后面处理会莫名其妙
+- **原子写**（`.part` + rename）：进程被杀不会留下半截损坏文件被当成正常图
+- **边下边算大小**，超 `IMAGE_STORE_MAX_BYTES` 直接中止，一个字节都不落盘
+- 任何失败都只进 `failed` 列表，**不抛异常** —— 转存失败不该影响主流程
+
+| 配置项 | 默认 | 说明 |
+| --- | --- | --- |
+| `IMAGE_STORE_DIR` | `python_backend/images` | 转存目录，会自动创建 |
+| `IMAGE_STORE_MAX_BYTES` | `20MB` | 单张上限，防异常大文件写满磁盘 |
+| `IMAGE_STORE_TIMEOUT` | `60` | 下载单张的超时秒数 |
+
+该目录已在 `.gitignore` 里 —— 生成图是运行时产物，体积大且可重新生成，不该进仓库。
+
+自检脚本加了 `--save`，一次跑通「真实生图 → 下载落盘」：
+
+```bash
+python tools/check_image_api.py --count 4 --save
+```
+
 ## 异常检测逻辑
 
 与 `python_backend/anomaly_detector.py` 完全一致。分两道闸：**环比触发，基线复核**。

@@ -37,6 +37,13 @@ def _no_post(*a, **k):  # pragma: no cover - 未被 patch 时被调用即视为�
 
 
 _requests.post = _no_post
+
+
+def _no_get(*a, **k):  # pragma: no cover - 未被 patch 时被调用即视为测试失败
+    raise AssertionError("本用例不应发起真实请求")
+
+
+_requests.get = _no_get
 _requests.exceptions = types.SimpleNamespace(RequestException=Exception)
 sys.modules.setdefault("requests", _requests)
 

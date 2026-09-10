@@ -165,6 +165,14 @@ HISTORY_DB = os.getenv("HISTORY_DB") or os.path.join(_HERE, "history.db")
 # 万级指标以内用默认 90 天没问题;再大就缩短保留期,或只给重点 SKU 存历史。
 HISTORY_RETENTION_DAYS = _int("HISTORY_RETENTION_DAYS", 90)
 
+# ------------------ 生图转存(图库的底座) ------------------
+# 火山方舟返回的图片 URL **只有 24 小时有效期**,不转存第二天就全是死链。
+# 所以生完必须立刻下载落盘,图库存本地路径而不是 URL。
+IMAGE_STORE_DIR = os.getenv("IMAGE_STORE_DIR") or os.path.join(_HERE, "images")
+# 单张上限。方舟 4K 图 JPEG 一般 2~5 MB,20 MB 足够宽松,防的是异常大文件把磁盘写满。
+IMAGE_STORE_MAX_BYTES = _int("IMAGE_STORE_MAX_BYTES", 20 * 1024 * 1024)
+IMAGE_STORE_TIMEOUT = _int("IMAGE_STORE_TIMEOUT", 60)  # 下载单张的超时秒数
+
 # 只给重点 SKU 存历史。
 # 历史**唯一**的用途是算基线,而长尾 SKU 本来交易就少、告警也少,存它的历史
 # 收益很低,却占了绝大部分容量(它们是数量上的大头)。

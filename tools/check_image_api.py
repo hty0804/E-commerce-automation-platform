@@ -13,6 +13,7 @@ check_image_api.py —— 用真实 Key 打一次生图接口,验证配置对不
     python tools/check_image_api.py --count 4      # 验证组图模式
     python tools/check_image_api.py --style scene  # 验证某个风格
     python tools/check_image_api.py --subject "black wireless earbuds"
+    python tools/check_image_api.py --save         # 生完立刻下载落盘(验证转存)
 
 退出码:0 成功,1 失败(配置缺失 / 接口报错 / 没解析出图片)。
 """
@@ -27,6 +28,7 @@ sys.path.insert(0, os.path.join(_ROOT, "python_backend"))
 
 import config        # noqa: E402
 import image_gen     # noqa: E402
+import image_store   # noqa: E402
 
 
 def _mask(key: str) -> str:
@@ -42,6 +44,8 @@ def main() -> int:
     ap.add_argument("--style", default="amazon_main", help="风格模板名")
     ap.add_argument("--count", type=int, default=1, help="出几张")
     ap.add_argument("--points", default="", help="卖点,逗号分隔")
+    ap.add_argument("--save", action="store_true",
+                    help="生完立刻下载落盘(方舟 URL 只有 24 小时有效期)")
     args = ap.parse_args()
 
     print("== 解析后的配置 ==")
@@ -80,8 +84,23 @@ def main() -> int:
     print(f"[成功] 拿到 {len(res['images'])} 张:")
     for i, u in enumerate(res["images"], 1):
         print(f"  {i}. {u[:120]}{'...' if len(u) > 120 else ''}")
+
     if image_gen.provider() == "ark":
         print("\n⚠️ 方舟的图片 URL 只有 24 小时有效期,存进图库前必须先下载转存。")
+
+    if args.save:
+        print("\n== 转存到本地 ==")
+        saved = image_store.store_generated(res)
+        print(f"  目录: {saved['dir']}")
+        print(f"  成功: {saved['count']} 张")
+        for rec in saved["saved"]:
+            print(f"    - {rec['name']}  ({rec['bytes']} 字节)")
+        for rec in saved["failed"]:
+            print(f"    ! 失败: {rec['error']}")
+        if not saved["ok"]:
+            print("[失败] 一张都没存下来")
+            return 1
+        print("\n提示:图库请存本地路径,不要存 URL。")
     return 0
 
 

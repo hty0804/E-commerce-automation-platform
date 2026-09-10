@@ -35,6 +35,10 @@ history.db-shm
 # 生成器的原子写临时文件
 *.js.tmp
 
+# 转存的生成图(运行时产物,体积大且可重新生成)+ 原子写残留
+python_backend/images/
+*.part
+
 # ===== 系统文件 =====
 .DS_Store
 Thumbs.db
