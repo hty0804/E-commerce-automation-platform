@@ -1098,6 +1098,11 @@
     return set;
   }
   function listMockImageSets() { return (get().mockImageSets || []).slice(); }
+  function markMockImageSet(id, gallery) {
+    var d = get(), set = (d.mockImageSets || []).find(function (x) { return x.id === id; });
+    if (!set) return null;
+    set.gallery = gallery; set.status = gallery; set.updatedAt = now(); save(); return set;
+  }
 
   /* ---------------- 会话 ---------------- */
   var SESSION_USER = { username: 'admin', password: 'admin123' };
@@ -1128,7 +1133,7 @@
     schemaForListing: schemaForListing, genListing: genListing, validateListing: validateListing,
     listingToSpapi: listingToSpapi, saveListing: saveListing, byteLen: byteLen, cnToEn: cnToEn,
     exportEnv: exportEnv, exportProductsPayload: exportProductsPayload, download: download,
-    saveMockImageSet: saveMockImageSet, listMockImageSets: listMockImageSets,
+    saveMockImageSet: saveMockImageSet, listMockImageSets: listMockImageSets, markMockImageSet: markMockImageSet,
     login: login, logout: logout, session: session,
     uid: uid, now: now, fmtTime: fmtTime, fmtClock: fmtClock, fmtHour: fmtHour, fromNow: fromNow, pad: pad
   };

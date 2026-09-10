@@ -171,8 +171,9 @@
   }
   function mockGallery(sets) {
     if (!sets.length) return '<div class="card"><div class="empty"><div class="e-ic">' + U.icon('image', 34) + '</div><div>还没有 Mock 生图结果，请从 Listing 页面点击「根据 Listing 生成商品图」</div></div></div>';
-    return '<div class="mock-gallery"><div class="card-head"><h3>Mock 待筛选结果</h3><span class="desc">仅前端演示数据，尚未调用真实生图接口</span></div>' + sets.map(function (set) {
-      return '<div class="mock-set card"><div class="row-between"><div><b>' + esc(set.styleLabel) + '</b><div class="cell-sub">' + esc(set.subject) + ' · ' + set.count + ' 套 · ' + S.fmtTime(set.createdAt) + '</div></div><span class="tag tag-yellow">待筛选</span></div><div class="mock-image-row">' + (set.images || []).map(function (im) { return '<div class="mock-image" style="background:' + im.tone + '"><span>' + U.icon('image', 28) + '</span><small>Mock ' + im.index + '</small></div>'; }).join('') + '</div><div class="hint">模拟图片占位图：接入真实 API 后，这里会替换为方舟转存图片。</div></div>';
+      return '<div class="mock-gallery"><div class="card-head"><h3>Mock 生图结果</h3><span class="desc">仅前端演示数据，尚未调用真实生图接口</span></div>' + sets.map(function (set) {
+      var g = set.gallery || 'unclassified';
+      return '<div class="mock-set card"><div class="row-between"><div><b>' + esc(set.styleLabel) + '</b><div class="cell-sub">' + esc(set.subject) + ' · ' + set.count + ' 套 · ' + S.fmtTime(set.createdAt) + '</div></div>' + galleryTag(g) + '</div><div class="mock-image-row">' + (set.images || []).map(function (im) { return '<div class="mock-image" style="background:' + im.tone + '"><span>' + U.icon('image', 28) + '</span><small>Mock ' + im.index + '</small></div>'; }).join('') + '</div><div class="image-actions"><button class="btn btn-sm btn-primary" data-mock-action="hot" data-mock-id="' + esc(set.id) + '">' + U.icon('bolt', 14) + ' 爆款</button><button class="btn btn-sm" data-mock-action="normal" data-mock-id="' + esc(set.id) + '">普通</button><button class="btn btn-sm" data-mock-action="unclassified" data-mock-id="' + esc(set.id) + '">待筛选</button></div><div class="hint">模拟图片占位图：接入真实 API 后，这里会替换为方舟转存图片。</div></div>';
     }).join('') + '</div>';
   }
 
@@ -215,6 +216,7 @@
       var sf = $('#imageStyleFilter'); if (sf) sf.onchange = function () { imageLibraryState.style = sf.value.trim(); self.load(); };
       var reload = $('#imageReload'); if (reload) reload.onclick = function () { self.load(); };
       $$('[data-image-action]').forEach(function (btn) { btn.onclick = function () { self.mark(btn.dataset.imageId, btn.dataset.imageAction); }; });
+      $$('[data-mock-action]').forEach(function (btn) { btn.onclick = function () { self.markMock(btn.dataset.mockId, btn.dataset.mockAction); }; });
       // file:// 冒烟 / 离线打开时没有 fetch：先渲染明确离线态，不抛异常。
       if (!imageLibraryState.loaded && !imageLibraryState.error && !imageLibraryState.loading) {
         if (typeof globalThis.fetch !== 'function') { imageLibraryState.error = '当前环境不支持 fetch；请使用浏览器打开，或启动图片库 API。'; App.refresh(); }
@@ -226,6 +228,15 @@
       Promise.all([imageApi('/api/images/stats'), imageApi('/api/images?gallery=' + encodeURIComponent(imageLibraryState.gallery) + '&style=' + encodeURIComponent(imageLibraryState.style) + '&limit=100')]).then(function (r) {
         imageLibraryState.stats = r[0]; imageLibraryState.items = r[1].items || []; imageLibraryState.loading = false; imageLibraryState.loaded = true; App.refresh();
       }).catch(function (e) { imageLibraryState.loading = false; imageLibraryState.error = e.message || '请求图片库失败'; App.refresh(); });
+    },
+    markMock: function (id, gallery) {
+      if (gallery === 'hot') {
+        var guidance = prompt('填写这组爆款图的视觉锚点（可选）', '柔和暖光; 构图留白; 产品主体突出');
+        if (guidance === null) return;
+      }
+      S.markMockImageSet(id, gallery);
+      U.toast('ok', 'Mock 筛选已保存', galleryLabel(gallery));
+      App.refresh();
     },
     mark: function (id, gallery) {
       var self = this;
