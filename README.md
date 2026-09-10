@@ -90,6 +90,106 @@ JS 写 `\u{1F000}`（带 `u` 标志），转义语法不兼容，各自从同一
 （避免密钥暴露在浏览器与跨域问题），网页端提供模拟预览。生成结果默认**只导出不自动上架**，
 先过本地校验（长度红线、违规词、必填属性）再人工确认。
 
+### 生图 Skill（`python_backend/image_gen.py`）
+
+给大模型一个「生图工具」，让它基于 Listing 自主决定出图。**模型无关** ——
+DeepSeek / 通义 / Moonshot / GPT / 任意 OpenAI 兼容接口都行，不绑定某一家。
+
+核心不是「能调接口」，而是**把图片风格固定住**：风格模板钉死画风、背景、光线、镜头、
+负向提示词和画幅，模型只能从预设里挑、不能自由发挥，商品主体和卖点才由它填。
+否则一个 SKU 两次出图风格都可能不一样，放到店铺里就是一盘散沙。
+固定风格的实现方式很直接 —— 工具 schema 里 `style` 用的是 `enum`，模型编不出第五种风格：
+
+```python
+>>> image_gen.tool_definition()["function"]["parameters"]["properties"]["style"]["enum"]
+['amazon_main', 'detail', 'lifestyle', 'scene']
+```
+
+内置四套风格（可用 `IMAGE_STYLES_JSON` 整套覆盖或新增）：
+
+| style | 中文名 | 画幅 | 用途 |
+| --- | --- | --- | --- |
+| `amazon_main` | 亚马逊白底主图 | 1:1 | 主图位，纯白背景、棚拍、居中 |
+| `scene` | 场景氛围图 | 4:3 | A+ / 副图，真实使用场景 |
+| `detail` | 细节特写 | 1:1 | 材质、工艺微距 |
+| `lifestyle` | 人物使用场景 | 3:4 | 人物出镜的调性图 |
+
+配置（`python_backend/config.py`，全部环境变量覆盖，**不配就不发任何请求**）：
+
+| 配置项 | 默认 | 说明 |
+| --- | --- | --- |
+| `IMAGE_ENABLED` | `false` | 总开关。关着时工具返回「未配置」，主流程照跑 |
+| `IMAGE_API_KEY` | 空 | 生图接口密钥 |
+| `IMAGE_API_BASE_URL` | 空 | 如 `https://api.example.com` |
+| `IMAGE_API_PATH` | `/images/generations` | 拼在 base 后面 |
+| `IMAGE_API_MODEL` | 空 | 留空则不传 `model` 字段（部分供应商不接受） |
+| `IMAGE_TIMEOUT` | `60` | 超时秒数 |
+| `IMAGE_DEFAULT_COUNT` | `4` | 模型没指定 `count` 时的默认出图套数 |
+| `IMAGE_STYLES_JSON` | 空 | 自定义风格，JSON 字符串（见下） |
+
+自定义风格示例 —— 键是风格名，`{subject}` / `{points}` 会被替换，
+`extra` 里的字段原样合并进请求体，**不同供应商的私有参数靠这个口子接，不用改代码**：
+
+```bash
+export IMAGE_STYLES_JSON='{
+  "amazon_main": {
+    "label": "亚马逊白底主图",
+    "prompt": "Studio shot of {subject}, pure white background, softbox lighting.",
+    "negative": "watermark, text, logo",
+    "aspect_ratio": "1:1",
+    "extra": {}
+  },
+  "爆款风": {
+    "label": "爆款高饱和风",
+    "prompt": "{subject}, vibrant colors, dramatic lighting, {points}",
+    "negative": "dull, low contrast",
+    "aspect_ratio": "1:1",
+    "extra": {"seed": 12345}
+  }
+}'
+```
+
+JSON 解析失败只会打 warning 并忽略，**不会让服务起不来**。
+
+两种用法：
+
+```python
+# 1) 直接出图(自己拼参数)
+req  = image_gen.build_image_request({
+    "subject": "wireless noise cancelling earbuds, black",
+    "selling_points": ["35dB 主动降噪", "30 小时续航"],
+    "style": "amazon_main",
+    "count": 4,
+})
+res = image_gen.generate(req)          # 永远不抛异常
+if res["ok"]:
+    for url in res["images"]: ...      # url / data URI
+else:
+    log.warning(res["error"])
+
+# 2) 让大模型自己决定要不要出图、出几套、用哪种风格
+out = image_gen.run_with_image_tool(
+    "给下面这个 Listing 配 4 张主图:\n" + listing_text,
+    max_rounds=3,
+)
+# {"ok", "content", "images", "used_tool", "error"}
+```
+
+`run_with_image_tool` 内部是标准的 function-calling 循环：带 `tools` 调模型 →
+拿到 `tool_calls` → 执行 → 结果喂回 → 模型给最终答复。
+模型不支持 `tools`（第一次调用失败）会**自动降级成纯 prompt 模式**，
+靠 `SYSTEM_SKILL_PROMPT` + `parse_tool_call()` 从输出里抠 JSON。
+执行失败会**如实告诉模型**，而不是伪造成功 —— 否则模型会以为图已生成，接着编造图片描述。
+
+返回值统一 `{"ok", "images", "error", "request"}`，HTTP 200 但解析不出图片**按失败处理**，
+不假装成功。`generate()` 保证不抛异常：生图挂了只影响生图，不影响上架 / 监控 / 告警。
+
+> **待对齐**：目前请求体按 OpenAI `images/generations` 兼容格式发
+> （`prompt` / `n` / `size` / 可选 `negative_prompt` / Bearer 鉴权），
+> 响应按 `data[].url` / `data[].b64_json` / `images[]` 三种形状解析。
+> 接具体供应商（Seedance 等）时只需改 `_build_request_body()` 和 `_extract_images()` 两个函数，
+> 其余逻辑不用动。
+
 ## 异常检测逻辑
 
 与 `python_backend/anomaly_detector.py` 完全一致。分两道闸：**环比触发，基线复核**。
