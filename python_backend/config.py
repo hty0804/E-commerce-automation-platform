@@ -97,6 +97,21 @@ LLM_MAX_INCIDENTS = _int("LLM_MAX_INCIDENTS", 20)  # 单次最多送多少条异
 LISTING_BRAND = os.getenv("LISTING_BRAND", "")  # 默认品牌名,留空则用商品自带的 brand
 # 生成后是否直接调用平台上架接口。默认 False —— 生成是低成本可逆的,上架不是,先过一遍人眼。
 LISTING_AUTO_PUBLISH = _bool("LISTING_AUTO_PUBLISH")
+
+# ------------------ 生图 skill(可选,默认关闭) ------------------
+# 给大模型提供一个"生图工具",让它能基于 Listing 自主决定出图。
+# 不配置 IMAGE_API_KEY 时**完全不发起任何请求**,工具会返回"未配置"结果,流程不中断。
+IMAGE_ENABLED = _bool("IMAGE_ENABLED")
+IMAGE_API_KEY = os.getenv("IMAGE_API_KEY")
+# 任何 OpenAI 兼容的生图接口都可以(Seedance / 通义万相 / 即梦 / SD WebUI 等)
+IMAGE_API_BASE_URL = os.getenv("IMAGE_API_BASE_URL", "")
+IMAGE_API_PATH = os.getenv("IMAGE_API_PATH", "/images/generations")
+IMAGE_API_MODEL = os.getenv("IMAGE_API_MODEL", "")   # 留空则不传 model 字段
+IMAGE_TIMEOUT = _int("IMAGE_TIMEOUT", 60)            # 生图比文本慢,默认给 60 秒
+IMAGE_DEFAULT_COUNT = _int("IMAGE_DEFAULT_COUNT", 4)  # 不指定时每张图出几套
+# 风格模板覆盖/扩展:JSON 对象,key 为风格名。留空则用内置模板。
+# 例: {"my_style": {"label":"我的风格","prompt":"...","negative":"...","aspect_ratio":"1:1"}}
+IMAGE_STYLES_JSON = os.getenv("IMAGE_STYLES_JSON", "")
 # 校验有 error 级问题时跳过上架(超长、违规词、必填属性缺失)。强烈建议保持 True。
 LISTING_SKIP_ON_ERROR = _bool("LISTING_SKIP_ON_ERROR", True)
 
