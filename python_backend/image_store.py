@@ -174,6 +174,7 @@ def save_image(src: str, meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any
         "bytes": len(data),
         "sha256": digest,
         "content_type": "",
+        "meta": dict(meta),
         "error": "",
     }
 
@@ -198,6 +199,7 @@ def save_images(srcs: List[str], meta: Optional[Dict[str, Any]] = None
         "failed": failed,
         "dir": store_dir(),
         "count": len(saved),
+        "meta": dict(meta or {}),
     }
 
 
@@ -217,6 +219,7 @@ def store_generated(result: Dict[str, Any]) -> Dict[str, Any]:
         "prompt": req.get("prompt", ""),
         "aspect_ratio": req.get("aspect_ratio", ""),
         "size": req.get("size", ""),
+        "style_guidance": req.get("style_guidance", ""),
     }
     return save_images(result.get("images") or [], meta)
 

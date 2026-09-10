@@ -172,6 +172,11 @@ IMAGE_STORE_DIR = os.getenv("IMAGE_STORE_DIR") or os.path.join(_HERE, "images")
 # 单张上限。方舟 4K 图 JPEG 一般 2~5 MB,20 MB 足够宽松,防的是异常大文件把磁盘写满。
 IMAGE_STORE_MAX_BYTES = _int("IMAGE_STORE_MAX_BYTES", 20 * 1024 * 1024)
 IMAGE_STORE_TIMEOUT = _int("IMAGE_STORE_TIMEOUT", 60)  # 下载单张的超时秒数
+# 图片库索引与图片文件分离:图片体积大放 IMAGE_STORE_DIR,SQLite 只记元数据和路径。
+IMAGE_LIBRARY_DB = os.getenv("IMAGE_LIBRARY_DB") or os.path.join(_HERE, "image_library.db")
+# 少于这个数量的爆款图不参与风格反哺,防止单张偶然好图劫持全店风格。
+IMAGE_HOT_MIN_SAMPLES = _int("IMAGE_HOT_MIN_SAMPLES", 3)
+IMAGE_HOT_FEEDBACK_MAX_CHARS = _int("IMAGE_HOT_FEEDBACK_MAX_CHARS", 500)
 
 # 只给重点 SKU 存历史。
 # 历史**唯一**的用途是算基线,而长尾 SKU 本来交易就少、告警也少,存它的历史

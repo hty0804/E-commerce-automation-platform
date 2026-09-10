@@ -264,6 +264,50 @@ sha256、时间。没有它，磁盘上就是一堆没来历的孤儿文件 —�
 
 该目录已在 `.gitignore` 里 —— 生成图是运行时产物，体积大且可重新生成，不该进仓库。
 
+### 图片库与爆款反哺
+
+转存之后要注册进图片库，图库不是把文件再复制一份，而是用 SQLite 保存索引、分类和风格反馈：
+
+```python
+saved = image_store.store_generated(result)
+# store_generated 返回的 saved 里带 meta；注册每张图片资产
+library = image_library.add_saved_batch(saved, gallery="unclassified")
+```
+
+人工筛选后把图放入爆款或普通图库。**只有爆款会反过来影响后续生图风格**，普通图只归档：
+
+```bash
+python python_backend/main.py images list unclassified
+python python_backend/main.py images mark 12 hot "柔和暖光; 木质背景; 右侧留白; 产品占画面 60%"
+python python_backend/main.py images mark 13 normal
+python python_backend/main.py images stats
+python python_backend/main.py images feedback scene
+```
+
+反哺有两个保险：
+
+1. 默认至少积累 **3 张同风格爆款图** 才生效（`IMAGE_HOT_MIN_SAMPLES=3`），避免一张偶然好图劫持整个店铺风格
+2. 只有人工填写的「视觉锚点」会反哺，不会把上一张具体商品的完整 prompt 生搬给新商品，避免主体污染
+
+一旦 `scene` 有 3 张爆款且填写了视觉锚点，后续：
+
+```python
+req = image_gen.build_image_request({
+    "subject": "新的商品主体",
+    "style": "scene",
+})
+# req["prompt"] 自动追加:
+# Maintain these proven visual anchors: 柔和暖光; 木质背景; 右侧留白.
+```
+
+图片库 SQLite 默认是 `python_backend/image_library.db`（已加入 `.gitignore`），配置项：
+
+| 配置项 | 默认 | 说明 |
+| --- | --- | --- |
+| `IMAGE_LIBRARY_DB` | `python_backend/image_library.db` | 图片元数据、分类、反馈索引 |
+| `IMAGE_HOT_MIN_SAMPLES` | `3` | 同风格爆款最小样本数 |
+| `IMAGE_HOT_FEEDBACK_MAX_CHARS` | `500` | 反哺提示最大长度 |
+
 自检脚本加了 `--save`，一次跑通「真实生图 → 下载落盘」：
 
 ```bash

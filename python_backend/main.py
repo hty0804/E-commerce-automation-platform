@@ -34,6 +34,7 @@ import history
 import incident
 import alerts
 import listing_gen
+import image_library
 import config
 
 log = logging.getLogger(__name__)
@@ -530,6 +531,8 @@ def _main() -> int:
         generate_and_publish(items, plat)
     elif command == "history":
         return _history_cmd(sys.argv[2:])
+    elif command == "images":
+        return _images_cmd(sys.argv[2:])
     else:
         print(
             "用法:\n"
@@ -539,12 +542,71 @@ def _main() -> int:
             "  python main.py genlist input.json     # 用大模型生成 Listing 并本地校验\n"
             "  python main.py genlist input.json pdd # 生成拼多多中文 Listing\n"
             "  python main.py history [子命令]       # 查看/清理指标历史库(基线用)\n"
+            "  python main.py images [子命令]        # 管理图片库与人工筛选\n"
+            "      list [gallery] [style]             # 列出图片资产\n"
+            "      mark <id> hot|normal|unclassified [视觉锚点] # 标爆款/普通并反馈风格\n"
+            "      stats                             # 查看图库统计\n"
+            "      feedback <style>                  # 查看爆款反哺提示\n"
+            "      delete <id>                       # 删除图库索引(不删图片文件)\n"
             "      series                            # 列出所有指标序列与样本数\n"
             "      recent <platform> <key> [n]       # 看某个指标最近的取值\n"
             "      baseline <platform> <key>         # 看该指标当前时段的基线值\n"
             "      prune                             # 清理超过保留期的历史"
         )
     return 0
+
+
+def _images_cmd(args: list) -> int:
+    """图片库查看/人工筛选入口。只改索引，不偷偷删本地图片文件。"""
+    sub = args[0] if args else "stats"
+    if sub == "stats":
+        print(json.dumps(image_library.stats(), ensure_ascii=False, indent=2))
+        return 0
+    if sub == "list":
+        gallery = args[1] if len(args) > 1 and args[1] != "-" else None
+        style = args[2] if len(args) > 2 and args[2] != "-" else None
+        rows = image_library.list_assets(gallery, style)
+        if not rows:
+            print("图片库里还没有符合条件的资产。")
+            return 0
+        print(f"{'id':>4}  {'gallery':<13} {'style':<15} {'subject':<28} 文件")
+        for row in rows:
+            print(f"{row['id']:>4}  {row['gallery']:<13} {row['style']:<15} "
+                  f"{row['subject'][:28]:<28} {row['file_name']}")
+        return 0
+    if sub == "mark":
+        if len(args) < 3 or args[2] not in image_library.GALLERIES:
+            print("用法: python main.py images mark <id> hot|normal|unclassified [视觉锚点]")
+            return 1
+        guidance = " ".join(args[3:]).strip() if len(args) > 3 else None
+        row = image_library.mark(int(args[1]), args[2], guidance)
+        if not row:
+            print(f"找不到图片资产 id={args[1]} 或图片库不可用。")
+            return 1
+        print(f"已标记 id={row['id']} -> {row['gallery']}"
+              + (f"，风格反馈: {row['style_guidance']}" if row.get("style_guidance") else ""))
+        return 0
+    if sub == "feedback":
+        if len(args) < 2:
+            print("用法: python main.py images feedback <style>")
+            return 1
+        feedback = image_library.style_feedback(args[1])
+        if not feedback:
+            print(f"{args[1]} 的爆款样本不足 {config.IMAGE_HOT_MIN_SAMPLES} 张，暂不反哺风格。")
+        else:
+            print(json.dumps(feedback, ensure_ascii=False, indent=2))
+        return 0
+    if sub == "delete":
+        if len(args) < 2:
+            print("用法: python main.py images delete <id>")
+            return 1
+        if image_library.delete(int(args[1])):
+            print(f"已删除图片库索引 id={args[1]}，本地图片文件未删除。")
+            return 0
+        print(f"删除失败或找不到 id={args[1]}。")
+        return 1
+    print(f"未知的 images 子命令: {sub}")
+    return 1
 
 
 def _history_cmd(args: list) -> int:

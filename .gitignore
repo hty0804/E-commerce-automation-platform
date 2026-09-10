@@ -31,6 +31,9 @@ state.json.broken
 history.db
 history.db-wal
 history.db-shm
+image_library.db
+image_library.db-wal
+image_library.db-shm
 
 # 生成器的原子写临时文件
 *.js.tmp

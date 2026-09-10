@@ -337,6 +337,22 @@ def build_image_request(args: Dict[str, Any]) -> Dict[str, Any]:
     elif points_txt:
         prompt = prompt.rstrip(". ") + ". Highlight: " + points_txt + "."
 
+    # 爆款反馈是人工筛选后的视觉锚点,不是模型自由发挥。
+    # 延迟 import 避免 image_gen <-> image_library 的模块初始化环依赖。
+    style_guidance = str(args.get("style_guidance") or "").strip()
+    if not style_guidance:
+        try:
+            import image_library
+            feedback = image_library.style_feedback(
+                style_name if style_name in all_styles() else "amazon_main")
+            if feedback:
+                style_guidance = feedback["guidance"]
+        except Exception as e:  # 反馈是增强能力,图库不可用不能拖垮生图
+            log.warning("读取爆款风格反馈失败,本次不注入: %s", e)
+    if style_guidance:
+        prompt = prompt.rstrip(". ") + ". Maintain these proven visual anchors: " \
+            + style_guidance + "."
+
     count = args.get("count")
     try:
         count = int(count) if count is not None else int(getattr(config, "IMAGE_DEFAULT_COUNT", 4))
@@ -351,6 +367,7 @@ def build_image_request(args: Dict[str, Any]) -> Dict[str, Any]:
         "selling_points": points,
         "style": style_name if style_name in all_styles() else "amazon_main",
         "style_label": style.get("label", ""),
+        "style_guidance": style_guidance,
         "prompt": prompt.strip(),
         "negative": str(style.get("negative") or ""),
         "aspect_ratio": ratio,
