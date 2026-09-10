@@ -72,8 +72,10 @@ class TestStylePresets(unittest.TestCase):
 
     def test_style_determines_prompt_and_size(self):
         """同一个商品换风格,提示词和画幅必须跟着变 —— 否则风格没生效。"""
-        a = image_gen.build_image_request({"subject": "earbuds", "style": "amazon_main"})
-        b = image_gen.build_image_request({"subject": "earbuds", "style": "scene"})
+        # provider 会改变 size 换算规则(方舟不认 1024x1024),这里锁定 openai 口径
+        with mock.patch.object(config, "IMAGE_PROVIDER", "openai"):
+            a = image_gen.build_image_request({"subject": "earbuds", "style": "amazon_main"})
+            b = image_gen.build_image_request({"subject": "earbuds", "style": "scene"})
         self.assertNotEqual(a["prompt"], b["prompt"])
         self.assertEqual(a["size"], "1024x1024")   # 1:1
         self.assertEqual(b["size"], "1152x896")    # 4:3
@@ -112,7 +114,8 @@ class TestStylePresets(unittest.TestCase):
             styles = image_gen.all_styles()
             self.assertIn("my_brand", styles)
             self.assertEqual(styles["scene"]["prompt"], "Overridden {subject}.")
-            req = image_gen.build_image_request({"subject": "cup", "style": "my_brand"})
+            with mock.patch.object(config, "IMAGE_PROVIDER", "openai"):
+                req = image_gen.build_image_request({"subject": "cup", "style": "my_brand"})
             self.assertEqual(req["size"], "1344x768")   # 16:9
             self.assertIn("Brand style shot", req["prompt"])
 
@@ -180,6 +183,7 @@ class TestGenerate(unittest.TestCase):
             "IMAGE_API_BASE_URL": "https://img.example.com/v1",
             "IMAGE_API_PATH": "/images/generations",
             "IMAGE_API_MODEL": "seedance", "IMAGE_TIMEOUT": 5,
+            "IMAGE_PROVIDER": "openai",
         }), mock.patch.object(image_gen.requests, "post", fake_post):
             req = image_gen.build_image_request(
                 {"subject": "earbuds", "style": "amazon_main", "count": 3})
@@ -396,6 +400,142 @@ class TestAgentLoop(unittest.TestCase):
         self.assertTrue(res["ok"])          # 对话本身成功
         self.assertEqual(res["images"], [])  # 但没有图
         self.assertTrue(res["used_tool"])
+
+
+class TestArkProvider(unittest.TestCase):
+    """
+    火山方舟(doubao-seedream)专项。
+
+    方舟的字段跟标准 OpenAI **不兼容**,这几条是最容易踩且踩了不会立刻报错的:
+    发 n 不出多张、漏了 watermark 出带水印的图、size 给 1024x1024 被直接拒。
+    每一条都对应一个真实后果,所以必须钉死。
+    """
+
+    def _post(self, payload=None):
+        captured = {}
+
+        def fake_post(url, **kw):
+            captured["url"] = url
+            captured["json"] = kw.get("json")
+            captured["headers"] = kw.get("headers")
+            return _Resp(payload if payload is not None else {"data": [{"url": "u"}]})
+
+        captured["_patch"] = mock.patch.object(image_gen.requests, "post", fake_post)
+        return captured
+
+    def _ark(self, **extra):
+        cfg = {
+            "IMAGE_ENABLED": True, "IMAGE_API_KEY": "ark-key",
+            "IMAGE_API_BASE_URL": "", "IMAGE_API_PATH": "/images/generations",
+            "IMAGE_API_MODEL": "", "IMAGE_TIMEOUT": 5,
+            "IMAGE_PROVIDER": "ark",
+            "IMAGE_WATERMARK": False, "IMAGE_NEGATIVE_IN_PROMPT": True,
+        }
+        cfg.update(extra)
+        return mock.patch.multiple(config, **cfg)
+
+    def test_preset_fills_endpoint_and_model(self):
+        """provider=ark 时不用手填 base_url / model —— 少一处填错的机会。"""
+        # 显式清空,免得开发机上的环境变量让断言变成碰运气
+        with mock.patch.multiple(config, IMAGE_API_BASE_URL="", IMAGE_API_MODEL="",
+                                 IMAGE_PROVIDER="ark"):
+            self.assertEqual(image_gen.resolved_base_url(),
+                             "https://ark.cn-beijing.volces.com/api/v3")
+            self.assertEqual(image_gen.resolved_model(), "doubao-seedream-4-0")
+            self.assertEqual(image_gen.endpoint(),
+                             "https://ark.cn-beijing.volces.com/api/v3/images/generations")
+
+    def test_explicit_env_beats_preset(self):
+        with mock.patch.object(config, "IMAGE_API_BASE_URL", "https://proxy.mine/v1"), \
+             mock.patch.object(config, "IMAGE_PROVIDER", "ark"):
+            self.assertEqual(image_gen.resolved_base_url(), "https://proxy.mine/v1")
+
+    def test_uses_sequential_generation_not_n(self):
+        """方舟没有 n。出多张必须走组图模式,否则"多套图"会静默退化成 1 张。"""
+        cap = self._post()
+        with self._ark(), cap["_patch"]:
+            image_gen.generate(image_gen.build_image_request(
+                {"subject": "earbuds", "style": "amazon_main", "count": 4}))
+
+        body = cap["json"]
+        self.assertNotIn("n", body)
+        self.assertEqual(body["sequential_image_generation"], "auto")
+        self.assertEqual(body["sequential_image_generation_options"], {"max_images": 4})
+
+    def test_single_image_disables_sequential_generation(self):
+        cap = self._post()
+        with self._ark(), cap["_patch"]:
+            image_gen.generate(image_gen.build_image_request({"subject": "x", "count": 1}))
+        self.assertEqual(cap["json"]["sequential_image_generation"], "disabled")
+
+    def test_watermark_defaults_off(self):
+        """方舟 watermark 默认 True —— 带水印的图不能当亚马逊主图。"""
+        cap = self._post()
+        with self._ark(), cap["_patch"]:
+            image_gen.generate(image_gen.build_image_request({"subject": "x"}))
+        self.assertIs(cap["json"]["watermark"], False)
+
+    def test_watermark_can_be_turned_on(self):
+        cap = self._post()
+        with self._ark(IMAGE_WATERMARK=True), cap["_patch"]:
+            image_gen.generate(image_gen.build_image_request({"subject": "x"}))
+        self.assertIs(cap["json"]["watermark"], True)
+
+    def test_negative_goes_into_prompt_not_its_own_field(self):
+        """方舟不认 negative_prompt。丢了它水印/文字就更容易冒出来,所以拼进 prompt。"""
+        cap = self._post()
+        with self._ark(), cap["_patch"]:
+            image_gen.generate(image_gen.build_image_request({"subject": "cup", "style": "amazon_main"}))
+        body = cap["json"]
+        self.assertNotIn("negative_prompt", body)
+        self.assertIn("Avoid:", body["prompt"])
+        self.assertIn("watermark", body["prompt"])
+
+    def test_negative_can_be_dropped(self):
+        cap = self._post()
+        with self._ark(IMAGE_NEGATIVE_IN_PROMPT=False), cap["_patch"]:
+            image_gen.generate(image_gen.build_image_request({"subject": "cup", "style": "amazon_main"}))
+        self.assertNotIn("Avoid:", cap["json"]["prompt"])
+        self.assertNotIn("negative_prompt", cap["json"])
+
+    def test_size_is_ark_legal(self):
+        """方舟要求总像素 ≥ 3686400,1024x1024(1M)会被直接拒。"""
+        for ratio, expected in (("1:1", "2048x2048"), ("4:3", "2304x1728"),
+                                ("16:9", "2848x1600")):
+            with mock.patch.object(config, "IMAGE_PROVIDER", "ark"):
+                req = image_gen.build_image_request(
+                    {"subject": "x", "aspect_ratio": ratio})
+            self.assertEqual(req["size"], expected, ratio)
+            w, h = (int(v) for v in expected.split("x"))
+            self.assertGreaterEqual(w * h, 3686400, ratio)
+            self.assertLessEqual(w * h, 16777216, ratio)
+
+    def test_http_error_carries_status_and_body(self):
+        """只报 "HTTP Error 400" 等于没说 —— 原因在响应体里那句人话。"""
+        cap = self._post()
+        cap["_patch"] = mock.patch.object(
+            image_gen.requests, "post",
+            lambda url, **kw: _Resp({"error": {"code": "InvalidParameter"}},
+                                    text='{"error":{"message":"size 非法"}}', status=400))
+        with self._ark(), cap["_patch"]:
+            res = image_gen.generate(image_gen.build_image_request({"subject": "x"}))
+        self.assertFalse(res["ok"])
+        self.assertIn("400", res["error"])
+        self.assertIn("size 非法", res["error"])
+
+    def test_per_image_error_is_surfaced(self):
+        """方舟可能顶层 error 为 null、但某一张失败,只写"没解析出图片"会让人抓瞎。"""
+        cap = self._post({"data": [{"error": {"code": "sensitive"}}], "error": None})
+        with self._ark(), cap["_patch"]:
+            res = image_gen.generate(image_gen.build_image_request({"subject": "x"}))
+        self.assertFalse(res["ok"])
+        self.assertIn("sensitive", res["error"])
+
+    def test_bearer_auth_header(self):
+        cap = self._post()
+        with self._ark(), cap["_patch"]:
+            image_gen.generate(image_gen.build_image_request({"subject": "x"}))
+        self.assertEqual(cap["headers"]["Authorization"], "Bearer ark-key")
 
 
 if __name__ == "__main__":

@@ -12,8 +12,12 @@ image_gen.py —— 生图 skill(给大模型调用的工具)
      负向提示词、画幅与供应商参数。模型只能从预设风格里挑,不能自由发挥 ——
      这样同一个店铺出来的图风格才是一致的。这是本模块的核心价值。
 
-  3. **供应商适配**:Seedance / 通义万相 / 即梦 / SD 等,配置驱动。
-     不配 IMAGE_API_KEY 时完全不发请求,工具返回"未配置",主流程照常跑。
+  3. **供应商适配**:默认走火山方舟(doubao-seedream),也支持通义万相 / 即梦 /
+     SD 等(IMAGE_PROVIDER=openai|custom)。配置驱动,不配 IMAGE_API_KEY 时
+     完全不发请求,工具返回"未配置",主流程照常跑。
+
+  ⚠️ 方舟返回的图片 URL **只有 24 小时有效期**。要存进图库必须自己下载转存,
+     不能直接把 URL 存库 —— 第二天就全是死链。
 
 设计原则(与项目其他模块一致):
   - 密钥只从环境变量读,不硬编码。
@@ -106,6 +110,67 @@ _RATIO_TO_SIZE: Dict[str, str] = {
     "16:9": "1344x768",
     "9:16": "768x1344",
 }
+
+# 火山方舟(doubao-seedream)对 size 有硬性限制:
+#   - 只接受 "2K"/"3K"/"4K" 或 "宽x高" 像素值
+#   - 总像素必须在 [3686400, 16777216] 之间
+# 1024x1024 只有 1M,**方舟会直接拒**,所以不能沿用上面那张 OpenAI 表。
+# 下面这些像素值都落在合法区间内,且是干净的整数比。
+_ARK_RATIO_TO_SIZE: Dict[str, str] = {
+    "1:1": "2048x2048",   # 4.19M
+    "4:3": "2304x1728",   # 3.98M
+    "3:4": "1728x2304",   # 3.98M
+    "16:9": "2848x1600",  # 4.56M
+    "9:16": "1600x2848",  # 4.56M
+}
+
+# 供应商预设:只补**留空**的字段,显式配置了的环境变量永远优先。
+PROVIDER_PRESETS: Dict[str, Dict[str, Any]] = {
+    "ark": {
+        "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+        "path": "/images/generations",
+        "model": "doubao-seedream-4-0",
+    },
+    "openai": {
+        "base_url": "",
+        "path": "/images/generations",
+        "model": "",
+    },
+    "custom": {"base_url": "", "path": "/images/generations", "model": ""},
+}
+
+
+def provider() -> str:
+    name = str(getattr(config, "IMAGE_PROVIDER", "ark") or "ark").strip().lower()
+    return name if name in PROVIDER_PRESETS else "custom"
+
+
+def _preset(key: str) -> str:
+    return str(PROVIDER_PRESETS.get(provider(), {}).get(key, "") or "")
+
+
+def resolved_base_url() -> str:
+    return str(getattr(config, "IMAGE_API_BASE_URL", "") or "").strip() or _preset("base_url")
+
+
+def resolved_path() -> str:
+    return str(getattr(config, "IMAGE_API_PATH", "/images/generations") or "").strip() \
+        or _preset("path") or "/images/generations"
+
+
+def resolved_model() -> str:
+    return str(getattr(config, "IMAGE_API_MODEL", "") or "").strip() or _preset("model")
+
+
+def endpoint() -> str:
+    """最终请求的完整 URL(给排查/自检脚本用)。"""
+    return resolved_base_url().rstrip("/") + "/" + resolved_path().lstrip("/")
+
+
+def _size_for(ratio: str) -> str:
+    table = _ARK_RATIO_TO_SIZE if provider() == "ark" else _RATIO_TO_SIZE
+    default = "2048x2048" if provider() == "ark" else "1024x1024"
+    return table.get(ratio, default)
 
 
 def _load_custom_styles() -> Dict[str, Dict[str, Any]]:
@@ -289,7 +354,7 @@ def build_image_request(args: Dict[str, Any]) -> Dict[str, Any]:
         "prompt": prompt.strip(),
         "negative": str(style.get("negative") or ""),
         "aspect_ratio": ratio,
-        "size": _RATIO_TO_SIZE.get(ratio, "1024x1024"),
+        "size": _size_for(ratio),
         "count": count,
         "extra": dict(style.get("extra") or {}),
     }
@@ -303,33 +368,92 @@ def available() -> bool:
     return bool(
         getattr(config, "IMAGE_ENABLED", False)
         and getattr(config, "IMAGE_API_KEY", "")
-        and getattr(config, "IMAGE_API_BASE_URL", "")
+        and resolved_base_url()
     )
 
 
 def _build_request_body(req: Dict[str, Any]) -> Dict[str, Any]:
     """
-    组装请求体。
+    组装请求体。按 provider 分两条路:
 
-    ⚠️ 这里用的是 OpenAI 兼容的 /images/generations 通用格式
-       (model / prompt / n / size / negative_prompt)。
-       不同供应商的字段名可能不同(Seedance、通义万相、即梦各有各的字段),
-       接入真实服务时以对方 API 文档为准调整本函数即可;
-       如果只是多了几个私有参数,不用改代码 —— 在风格模板的 extra 里配上就会被合并进来。
+      - ark(火山方舟 doubao-seedream):字段跟标准 OpenAI **不兼容**,见 _build_ark_body
+      - 其他:标准 OpenAI /images/generations 格式(prompt / n / size / negative_prompt)
+
+    只是多了几个私有参数的话不用改代码 —— 在风格模板的 extra 里配上就会被合并进来,
+    且 extra 放在最后,可以覆盖上面的任何字段。
     """
+    if provider() == "ark":
+        return _build_ark_body(req)
+    return _build_openai_body(req)
+
+
+def _build_openai_body(req: Dict[str, Any]) -> Dict[str, Any]:
     body: Dict[str, Any] = {
         "prompt": req["prompt"],
         "n": req["count"],
         "size": req["size"],
     }
-    model = getattr(config, "IMAGE_API_MODEL", "")
+    model = resolved_model()
     if model:
         body["model"] = model
     if req.get("negative"):
         body["negative_prompt"] = req["negative"]
-    # 供应商私有参数放最后,允许覆盖上面的通用字段
     body.update(req.get("extra") or {})
     return body
+
+
+def _build_ark_body(req: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    火山方舟 doubao-seedream 的请求体。和 OpenAI 格式有 4 处关键差异,踩过才知道:
+
+      1. **没有 n 参数**。想出多张要用组图模式:
+         sequential_image_generation="auto" + options.max_images(1~15)。
+         直接发 n 方舟会当未知字段处理,出图数量根本不对 —— "生成多套图"会静默退化成 1 张。
+      2. **没有 negative_prompt 字段**。负向词只能拼进 prompt(IMAGE_NEGATIVE_IN_PROMPT)。
+      3. **watermark 默认 True** —— 亚马逊主图带水印就是违规,这里强制下发 False。
+      4. **size 只认 "2K"/"3K"/"4K" 或宽x高像素值,且总像素 ≥ 3686400**。
+         常见的 1024x1024 会被直接拒(_ARK_RATIO_TO_SIZE 已避开)。
+    """
+    prompt = req["prompt"]
+    negative = str(req.get("negative") or "")
+    if negative and getattr(config, "IMAGE_NEGATIVE_IN_PROMPT", True):
+        prompt = prompt.rstrip(". ") + ". Avoid: " + negative + "."
+
+    body: Dict[str, Any] = {
+        "model": resolved_model(),
+        "prompt": prompt,
+        "size": req["size"],
+        "response_format": "url",
+        "watermark": bool(getattr(config, "IMAGE_WATERMARK", False)),
+    }
+    count = int(req.get("count") or 1)
+    if count > 1:
+        body["sequential_image_generation"] = "auto"
+        body["sequential_image_generation_options"] = {"max_images": count}
+    else:
+        body["sequential_image_generation"] = "disabled"
+    # 供应商私有参数放最后,允许覆盖上面的任何字段
+    body.update(req.get("extra") or {})
+    return body
+
+
+def _describe_api_error(data: Any) -> str:
+    """
+    把响应里的错误捞出来。方舟会在 data[].error 里放**单张图**的失败原因,
+    顶层 error 为 null 但某一张失败是可能的 —— 只写"没解析出图片"会让人一头雾水。
+    """
+    if not isinstance(data, dict):
+        return ""
+    parts: List[str] = []
+    top = data.get("error")
+    if top:
+        parts.append(f"error={top}")
+    items = data.get("data")
+    if isinstance(items, list):
+        for i, it in enumerate(items):
+            if isinstance(it, dict) and it.get("error"):
+                parts.append(f"data[{i}].error={it['error']}")
+    return "; ".join(parts)
 
 
 def _extract_images(data: Any) -> List[str]:
@@ -385,8 +509,7 @@ def generate(req: Dict[str, Any]) -> Dict[str, Any]:
             "request": req,
         }
 
-    url = str(getattr(config, "IMAGE_API_BASE_URL", "")).rstrip("/") \
-        + "/" + str(getattr(config, "IMAGE_API_PATH", "/images/generations")).lstrip("/")
+    url = endpoint()
     body = _build_request_body(req)
 
     try:
@@ -399,13 +522,25 @@ def generate(req: Dict[str, Any]) -> Dict[str, Any]:
             json=body,
             timeout=getattr(config, "IMAGE_TIMEOUT", 60),
         )
-        resp.raise_for_status()
-        images = _extract_images(resp.json())
-        if not images:
+        # 非 2xx 一定要把状态码和响应体带出来:生图接口的错误原因(JSON 里那句人话)
+        # 是排查的唯一线索,只抛一句 "HTTP Error 400" 等于没说。
+        if resp.status_code >= 400:
             return {
                 "ok": False,
                 "images": [],
-                "error": f"生图接口返回成功但没解析出图片: {resp.text[:200]}",
+                "error": f"生图接口返回 HTTP {resp.status_code}: {resp.text[:300]}",
+                "request": req,
+            }
+        payload = resp.json()
+        images = _extract_images(payload)
+        if not images:
+            detail = _describe_api_error(payload)
+            return {
+                "ok": False,
+                "images": [],
+                "error": "生图接口返回成功但没解析出图片"
+                         + (f"({detail})" if detail else "")
+                         + f": {resp.text[:300]}",
                 "request": req,
             }
         return {"ok": True, "images": images, "error": "", "request": req}

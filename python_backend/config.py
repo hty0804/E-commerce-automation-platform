@@ -103,12 +103,24 @@ LISTING_AUTO_PUBLISH = _bool("LISTING_AUTO_PUBLISH")
 # 不配置 IMAGE_API_KEY 时**完全不发起任何请求**,工具会返回"未配置"结果,流程不中断。
 IMAGE_ENABLED = _bool("IMAGE_ENABLED")
 IMAGE_API_KEY = os.getenv("IMAGE_API_KEY")
-# 任何 OpenAI 兼容的生图接口都可以(Seedance / 通义万相 / 即梦 / SD WebUI 等)
+# 供应商预设:ark(火山方舟/豆包) | openai | custom
+#   ark    —— 用火山方舟 doubao-seedream,自动套用它的字段(组图、水印、尺寸规则)
+#   openai —— 标准 OpenAI /images/generations 格式(n + negative_prompt)
+#   custom —— 什么都不帮你填,完全按下面的环境变量来
+# 预设只填充**留空**的字段,显式设置了的环境变量永远优先。
+IMAGE_PROVIDER = os.getenv("IMAGE_PROVIDER", "ark").strip().lower()
+# 任何兼容的生图接口都可以(火山方舟 / Seedance / 通义万相 / 即梦 / SD WebUI 等)
 IMAGE_API_BASE_URL = os.getenv("IMAGE_API_BASE_URL", "")
 IMAGE_API_PATH = os.getenv("IMAGE_API_PATH", "/images/generations")
-IMAGE_API_MODEL = os.getenv("IMAGE_API_MODEL", "")   # 留空则不传 model 字段
+IMAGE_API_MODEL = os.getenv("IMAGE_API_MODEL", "")   # 留空则用 provider 预设的默认模型
 IMAGE_TIMEOUT = _int("IMAGE_TIMEOUT", 60)            # 生图比文本慢,默认给 60 秒
 IMAGE_DEFAULT_COUNT = _int("IMAGE_DEFAULT_COUNT", 4)  # 不指定时每张图出几套
+# 方舟的 watermark 默认是 True —— 带水印的图不能当亚马逊主图,这里默认关掉。
+# (只有 provider=ark 时会下发该字段)
+IMAGE_WATERMARK = _bool("IMAGE_WATERMARK", False)
+# 方舟不支持 negative_prompt 字段。默认 True:把负向提示词拼进 prompt 末尾;
+# 设为 False 则完全丢弃(提示词更干净,但水印/文字更可能出现)。
+IMAGE_NEGATIVE_IN_PROMPT = _bool("IMAGE_NEGATIVE_IN_PROMPT", True)
 # 风格模板覆盖/扩展:JSON 对象,key 为风格名。留空则用内置模板。
 # 例: {"my_style": {"label":"我的风格","prompt":"...","negative":"...","aspect_ratio":"1:1"}}
 IMAGE_STYLES_JSON = os.getenv("IMAGE_STYLES_JSON", "")

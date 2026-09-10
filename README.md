@@ -119,13 +119,53 @@ DeepSeek / 通义 / Moonshot / GPT / 任意 OpenAI 兼容接口都行，不绑�
 | 配置项 | 默认 | 说明 |
 | --- | --- | --- |
 | `IMAGE_ENABLED` | `false` | 总开关。关着时工具返回「未配置」，主流程照跑 |
+| `IMAGE_PROVIDER` | `ark` | `ark` / `openai` / `custom`，见下 |
 | `IMAGE_API_KEY` | 空 | 生图接口密钥 |
-| `IMAGE_API_BASE_URL` | 空 | 如 `https://api.example.com` |
+| `IMAGE_API_BASE_URL` | 空 | 留空则用 provider 预设 |
 | `IMAGE_API_PATH` | `/images/generations` | 拼在 base 后面 |
-| `IMAGE_API_MODEL` | 空 | 留空则不传 `model` 字段（部分供应商不接受） |
+| `IMAGE_API_MODEL` | 空 | 留空则用 provider 预设（方舟为 `doubao-seedream-4-0`） |
 | `IMAGE_TIMEOUT` | `60` | 超时秒数 |
 | `IMAGE_DEFAULT_COUNT` | `4` | 模型没指定 `count` 时的默认出图套数 |
+| `IMAGE_WATERMARK` | `false` | 仅方舟下发。**方舟默认是 `true`，不关就是带水印的图** |
+| `IMAGE_NEGATIVE_IN_PROMPT` | `true` | 仅方舟生效：把负向词拼进 prompt（方舟没有 `negative_prompt` 字段） |
 | `IMAGE_STYLES_JSON` | 空 | 自定义风格，JSON 字符串（见下） |
+
+预设只填充**留空**的字段 —— 显式设置了的环境变量永远优先。
+
+### 对接火山方舟（豆包 doubao-seedream）
+
+默认就是方舟，配两个变量即可：
+
+```bash
+export IMAGE_ENABLED=true
+export IMAGE_API_KEY=你的方舟APIKey        # 控制台「API Key 管理」里拿
+export IMAGE_API_MODEL=doubao-seedream-4-0 # 可省略，预设就是这个
+```
+
+自检（会真实调用、真实扣费，先把解析出的配置和实际请求体打出来再发）：
+
+```bash
+python tools/check_image_api.py --count 4 --points "35dB降噪,30小时续航"
+```
+
+**方舟跟标准 OpenAI 格式有 4 处不兼容**，直接套通用格式会踩坑，代码里已分别处理：
+
+| # | 差异 | 踩了会怎样 |
+| --- | --- | --- |
+| 1 | 没有 `n` 参数，出多张要用 `sequential_image_generation:"auto"` + `options.max_images`（1–15） | 发 `n` 它不认，「生成多套图」**静默退化成 1 张** |
+| 2 | 没有 `negative_prompt` 字段 | 负向词被丢掉，水印/文字更容易冒出来 → 拼进 prompt |
+| 3 | `watermark` **默认 `true`** | 亚马逊主图带水印 = 违规，必须显式关 |
+| 4 | `size` 只认 `2K`/`3K`/`4K` 或宽×高像素，且总像素 ∈ [3686400, 16777216] | 常见的 `1024x1024` 只有 1M，**会被直接拒** |
+
+> ⚠️ 方舟返回的图片 URL **只有 24 小时有效期**。图库必须把图片**下载转存**，
+> 不能直接把 URL 存进库 —— 第二天就全是死链。这一步在做图库时一定要实现。
+
+想用别家：`IMAGE_PROVIDER=openai` 走标准 OpenAI 格式（`n` + `negative_prompt`）；
+`IMAGE_PROVIDER=custom` 什么都不帮你填。
+
+> 关于 `doubao-mcp-server`：那是给 **MCP 客户端**（Cursor / Claude Desktop 等）用的，
+> 模型直接调 MCP 工具。本项目是 Python 后端，没有 MCP client，所以走上面的 REST 接口 ——
+> 后端自己包装成 function-calling 工具，效果一样，且不依赖客户端支持 MCP。
 
 自定义风格示例 —— 键是风格名，`{subject}` / `{points}` 会被替换，
 `extra` 里的字段原样合并进请求体，**不同供应商的私有参数靠这个口子接，不用改代码**：
@@ -184,11 +224,9 @@ out = image_gen.run_with_image_tool(
 返回值统一 `{"ok", "images", "error", "request"}`，HTTP 200 但解析不出图片**按失败处理**，
 不假装成功。`generate()` 保证不抛异常：生图挂了只影响生图，不影响上架 / 监控 / 告警。
 
-> **待对齐**：目前请求体按 OpenAI `images/generations` 兼容格式发
-> （`prompt` / `n` / `size` / 可选 `negative_prompt` / Bearer 鉴权），
-> 响应按 `data[].url` / `data[].b64_json` / `images[]` 三种形状解析。
-> 接具体供应商（Seedance 等）时只需改 `_build_request_body()` 和 `_extract_images()` 两个函数，
-> 其余逻辑不用动。
+> 换供应商时只需改 `_build_request_body()`（分了 `_build_ark_body` / `_build_openai_body` 两条路）
+> 和 `_extract_images()`，其余逻辑不用动。响应解析已兼容 `data[].url` /
+> `data[].b64_json` / `data[].error` / `images[]` 几种形状。
 
 ## 异常检测逻辑
 
