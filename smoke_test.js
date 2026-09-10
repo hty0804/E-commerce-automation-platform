@@ -24,7 +24,10 @@ if (!window.matchMedia) {
 
 // 直接从 index.html 里解析，不要在这里另维护一份顺序：
 // 新增脚本（比如 listing_rules.js）时漏改这里会直接炸，而炸在这里正是我们想要的。
-const files = [...html.matchAll(/<script src="([^"]+)"><\/script>/g)].map(m => m[1]);
+// 容忍 ?v=2 这类缓存版本号：浏览器/代理会忽略 query 段去取实际文件，
+// 我们读本地文件时也得把 query 段剥掉，否则 `?` 在 Windows 是非法文件名字符。
+const files = [...html.matchAll(/<script src="([^"]+)"><\/script>/g)]
+  .map(m => m[1].split('?')[0]);
 if (!files.length) { console.error('index.html 里没解析到任何 <script src>'); process.exit(1); }
 for (const f of files) {
   window.eval(fs.readFileSync(path.join(ROOT, f), 'utf8'));

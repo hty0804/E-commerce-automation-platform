@@ -147,7 +147,9 @@ class TestFrontendConsistency(unittest.TestCase):
 
     def test_index_html_loads_rules_before_store(self):
         html = _read(INDEX_HTML)
-        srcs = re.findall(r'<script src="([^"]+)"></script>', html)
+        # 容忍 ?v=2 这类缓存版本号：浏览器/代理加载时忽略 query 段，
+        # 脚本的"逻辑加载顺序"也以 query 之前的路径为准。
+        srcs = [s.split('?', 1)[0] for s in re.findall(r'<script src="([^"]+)"></script>', html)]
         self.assertIn("assets/js/listing_rules.js", srcs,
                       "index.html 没有引入 listing_rules.js")
         self.assertIn("assets/js/store.js", srcs)
