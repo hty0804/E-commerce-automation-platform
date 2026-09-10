@@ -106,6 +106,16 @@ try {
   };
   const r = S.genListing(input, 'amazon', false);
   ok('genListing amazon returns result', r && typeof r.listing === 'object');
+// Mock 生图入口：不应发网络请求，结果保存到本地待筛选集合
+try {
+  const beforeMock = S.listMockImageSets().length;
+  const mockSet = { id: 'smoke_mock', status: 'unclassified', gallery: 'unclassified', style: 'scene', styleLabel: '场景氛围图', subject: '耳机', count: 2, createdAt: S.now(), listingTitle: r.listing.title, images: [{ id: 'm1', index: 1, tone: '#fff' }, { id: 'm2', index: 2, tone: '#eee' }] };
+  S.saveMockImageSet(mockSet);
+  const afterMock = S.listMockImageSets();
+  ok('mock image set saved locally', afterMock.length === beforeMock + 1 && afterMock[0].status === 'unclassified');
+  ok('mock image set has selected style', afterMock[0].style === 'scene');
+} catch (e) { ok('mock image set saved locally', false); ok('mock image set has selected style', false); }
+
   ok('genListing amazon title non-empty', r && r.listing.title.length > 0);
   ok('genListing amazon 5 bullets', r && Array.isArray(r.listing.bullets) && r.listing.bullets.length === 5);
   ok('genListing amazon cnToEn applied',

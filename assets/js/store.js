@@ -662,6 +662,7 @@
       alerts: seedAlerts(products, settings.llm.simulate),
       metrics: seedMetrics(),
       logs: seedLogs(),
+      mockImageSets: [],
       stats: { totalRuns: 0, totalAlerts: 0, totalListing: 0, lastRunAt: 0 }
     };
   }
@@ -703,6 +704,7 @@
       if (!db.version || db.version < 2) { migrate(db); save(); }
       if (db.version < 3) { migrateV3(db); save(); }
       if (!db.settings.imageLibrary) { db.settings.imageLibrary = { apiBaseUrl: 'https://629ff8cd6f86472a8e2792ea8a8a3ee9.sg2.agentos-app.run' }; save(); }
+      if (!Array.isArray(db.mockImageSets)) { db.mockImageSets = []; save(); }
     }
     return db;
   }
@@ -1086,6 +1088,17 @@
     setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 100);
   }
 
+  /* ---------------- Mock 商品图 ---------------- */
+  function saveMockImageSet(set) {
+    var d = get();
+    d.mockImageSets = d.mockImageSets || [];
+    d.mockImageSets.unshift(set);
+    if (d.mockImageSets.length > 30) d.mockImageSets.length = 30;
+    save();
+    return set;
+  }
+  function listMockImageSets() { return (get().mockImageSets || []).slice(); }
+
   /* ---------------- 会话 ---------------- */
   var SESSION_USER = { username: 'admin', password: 'admin123' };
   function login(u, p) {
@@ -1115,6 +1128,7 @@
     schemaForListing: schemaForListing, genListing: genListing, validateListing: validateListing,
     listingToSpapi: listingToSpapi, saveListing: saveListing, byteLen: byteLen, cnToEn: cnToEn,
     exportEnv: exportEnv, exportProductsPayload: exportProductsPayload, download: download,
+    saveMockImageSet: saveMockImageSet, listMockImageSets: listMockImageSets,
     login: login, logout: logout, session: session,
     uid: uid, now: now, fmtTime: fmtTime, fmtClock: fmtClock, fmtHour: fmtHour, fromNow: fromNow, pad: pad
   };

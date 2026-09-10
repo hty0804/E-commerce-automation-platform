@@ -282,6 +282,17 @@ table.tbl .cell-main { font-weight: 500; }
 .pager button.active { background: var(--primary); color: #fff; border-color: var(--primary); }
 .pager button:disabled { opacity: .45; cursor: not-allowed; }
 .image-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:16px; }
+.mock-gallery { margin-top:18px; }
+.mock-set { padding:16px; margin-top:10px; }
+.mock-image-row { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; margin-top:14px; }
+.mock-image { min-height:125px; border-radius:8px; display:flex; flex-direction:column; align-items:center; justify-content:center; color:var(--primary); gap:8px; border:1px solid var(--border); }
+.mock-image small { color:var(--text-2); font-size:12px; }
+.mock-style-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+.mock-style { display:flex; gap:8px; align-items:flex-start; padding:12px; border:1px solid var(--border); border-radius:8px; cursor:pointer; }
+.mock-style:has(input:checked) { border-color:var(--primary); background:var(--primary-soft); }
+.mock-style input { margin-top:3px; accent-color:var(--primary); }
+.mock-style b,.mock-style small { display:block; }
+.mock-style small { color:var(--text-2); margin-top:4px; }
 .image-asset-card { overflow:hidden; min-width:0; }
 .image-asset-preview { height:180px; background:var(--bg-soft); display:flex; align-items:center; justify-content:center; overflow:hidden; }
 .image-asset-preview img { width:100%; height:100%; object-fit:cover; display:block; }
@@ -298,7 +309,7 @@ table.tbl .cell-main { font-weight: 500; }
 .offline-state h3 { color:var(--text); margin:5px 0 8px; }
 .offline-state p { margin:5px 0; }
 @media (max-width:1100px) { .image-grid { grid-template-columns:repeat(3,minmax(0,1fr)); } }
-@media (max-width:760px) { .image-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media (max-width:760px) { .image-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .mock-image-row,.mock-style-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 
 .empty { padding: 48px 20px; text-align: center; color: var(--muted); }
 .empty .e-ic { font-size: 34px; opacity: .3; margin-bottom: 10px; }

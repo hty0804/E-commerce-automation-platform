@@ -169,6 +169,13 @@
     var cls = g === 'hot' ? 'tag-red' : g === 'normal' ? 'tag-blue' : 'tag-gray';
     return '<span class="tag ' + cls + '">' + esc(galleryLabel(g)) + '</span>';
   }
+  function mockGallery(sets) {
+    if (!sets.length) return '<div class="card"><div class="empty"><div class="e-ic">' + U.icon('image', 34) + '</div><div>还没有 Mock 生图结果，请从 Listing 页面点击「根据 Listing 生成商品图」</div></div></div>';
+    return '<div class="mock-gallery"><div class="card-head"><h3>Mock 待筛选结果</h3><span class="desc">仅前端演示数据，尚未调用真实生图接口</span></div>' + sets.map(function (set) {
+      return '<div class="mock-set card"><div class="row-between"><div><b>' + esc(set.styleLabel) + '</b><div class="cell-sub">' + esc(set.subject) + ' · ' + set.count + ' 套 · ' + S.fmtTime(set.createdAt) + '</div></div><span class="tag tag-yellow">待筛选</span></div><div class="mock-image-row">' + (set.images || []).map(function (im) { return '<div class="mock-image" style="background:' + im.tone + '"><span>' + U.icon('image', 28) + '</span><small>Mock ' + im.index + '</small></div>'; }).join('') + '</div><div class="hint">模拟图片占位图：接入真实 API 后，这里会替换为方舟转存图片。</div></div>';
+    }).join('') + '</div>';
+  }
+
   function imageLibraryCard(item) {
     var base = imageApiBase();
     var src = base + '/media/' + encodeURIComponent(item.file_name || '');
@@ -187,8 +194,11 @@
     title: '图片库', desc: '查看生图结果，人工筛选并让爆款风格反哺后续生图',
     render: function () {
       var st = imageLibraryState, stats = st.stats || { total: 0, unclassified: 0, hot: 0, normal: 0 };
-      if (st.error) return '<div class="card"><div class="offline-state">' + U.icon('plug', 32) + '<h3>图片库 API 未连接</h3><p>' + esc(st.error) + '</p><p class="hint">请启动 <code>python python_backend/image_api.py</code>，或在系统设置中填写公网 API 地址。</p></div></div>';
+      var mockSets = S.listMockImageSets();
+      var mockCount = mockSets.reduce(function (n, x) { return n + (x.images || []).length; }, 0);
+      if (st.error) return '<div class="card"><div class="offline-state">' + U.icon('plug', 32) + '<h3>图片库 API 未连接</h3><p>' + esc(st.error) + '</p><p class="hint">请启动 <code>python python_backend/image_api.py</code>，或在系统设置中填写公网 API 地址。Mock 结果仍可在本页查看。</p></div>' + mockGallery(mockSets) + '</div>';
       var items = st.items || [];
+      var mockHtml = mockGallery(mockSets);
       return '<div class="grid grid-4 mb16 image-stats">' +
         '<div class="card stat-card"><div class="cell-sub">待人工筛选</div><b>' + stats.unclassified + '</b></div>' +
         '<div class="card stat-card hot-stat"><div class="cell-sub">爆款图库</div><b>' + stats.hot + '</b></div>' +
@@ -197,7 +207,7 @@
         '<div class="card mb16"><div class="filter-bar"><select class="select" id="imageGalleryFilter">' +
         ['unclassified:待筛选', 'hot:爆款图库', 'normal:普通图库'].map(function (x) { var a = x.split(':'); return '<option value="' + a[0] + '"' + (st.gallery === a[0] ? ' selected' : '') + '>' + a[1] + '</option>'; }).join('') +
         '</select><input class="input" id="imageStyleFilter" value="' + esc(st.style) + '" placeholder="按 style 筛选（可选）" style="max-width:220px" /><button class="btn btn-sm" id="imageReload">刷新</button><span class="desc" style="margin-left:auto">爆款达到样本门槛后自动反哺风格</span></div></div>' +
-        (st.loading ? '<div class="card"><div class="loading-state">正在读取图片库...</div></div>' : items.length ? '<div class="image-grid">' + items.map(imageLibraryCard).join('') + '</div>' : '<div class="card">' + empty(st.gallery === 'unclassified' ? '暂无待筛选图片' : '这个图库还没有图片') + '</div>');
+        (st.loading ? '<div class="card"><div class="loading-state">正在读取图片库...</div></div>' : items.length ? '<div class="image-grid">' + items.map(imageLibraryCard).join('') + '</div>' : '<div class="card">' + empty(st.gallery === 'unclassified' ? '暂无待筛选图片' : '这个图库还没有图片') + '</div>') + mockHtml;
     },
     mount: function () {
       var self = this;
@@ -567,6 +577,7 @@
           '</div>' +
           '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
             '<button class="btn" id="lgRecheck">重新校验</button>' +
+            '<button class="btn btn-primary" id="lgImageMock">' + U.icon('image', 15) + ' 根据 Listing 生成商品图</button>' +
             '<button class="btn" id="lgCopy">复制文案</button>' +
             '<button class="btn btn-primary" id="lgExport">导出 SP-API Payload</button>' +
           '</div>' +
@@ -641,6 +652,10 @@
         }, 620);
       };
 
+      var im = $('#lgImageMock');
+      if (im) im.onclick = function () {
+        self.openMockImageModal(self.readForm());
+      };
       var rc = $('#lgRecheck');
       if (rc) rc.onclick = function () {
         self.readForm();
@@ -690,6 +705,28 @@
       };
     },
 
+    openMockImageModal: function (r) {
+      if (!r || !r.listing) { U.toast('warn', '请先生成 Listing', '商品图需要基于 Listing 生成'); return; }
+      var styles = [{ k: 'amazon_main', n: '亚马逊白底主图', d: '纯白背景 · 棚拍 · 居中构图' }, { k: 'scene', n: '场景氛围图', d: '真实场景 · 暖色 · 商业摄影' }, { k: 'detail', n: '细节特写', d: '材质纹理 · 微距 · 工艺细节' }, { k: 'lifestyle', n: '人物使用场景', d: '人物出镜 · 生活方式 · 3:4' }];
+      var body = '<div class="mock-image-modal"><div class="hint">当前为前端 Mock，不会调用大模型、方舟或任何网络接口。生成完成后会直接进入图片库的「待筛选」。</div>' +
+        '<div class="field"><label>商品主体</label><input class="input" id="mockImageSubject" value="' + esc(r.listing.title) + '" /></div>' +
+        '<div class="field"><label>生成风格</label><div class="mock-style-grid">' + styles.map(function (s) { return '<label class="mock-style"><input type="radio" name="mockStyle" value="' + s.k + '"' + (s.k === 'amazon_main' ? ' checked' : '') + ' /><span><b>' + s.n + '</b><small>' + s.d + '</small></span></label>'; }).join('') + '</div></div>' +
+        '<div class="field"><label>生成套数</label><select class="select" id="mockImageCount"><option value="4">4 套（推荐）</option><option value="1">1 套</option><option value="8">8 套</option></select></div>' +
+        '<div class="mock-lock"><b>' + U.icon('check', 14) + ' 风格已锁定</b><span>Mock 会保持所选风格，真实接入后使用相同 style preset</span></div></div>';
+      U.modal({ title: '根据 Listing 生成商品图', body: body, width: 680, okText: '开始 Mock 生图', onOk: function (w, btn) {
+        var subject = $('#mockImageSubject', w).value.trim(), style = w.querySelector('input[name="mockStyle"]:checked').value, count = parseInt($('#mockImageCount', w).value, 10);
+        if (!subject) { U.toast('warn', '请填写商品主体'); return false; }
+        btn.disabled = true; btn.textContent = '生成中...';
+        setTimeout(function () { listing.makeMockImages({ subject: subject, style: style, count: count, listing: r.listing }); }, 700);
+        return false;
+      }});
+    },
+    makeMockImages: function (args) {
+      var names = { amazon_main: '亚马逊白底主图', scene: '场景氛围图', detail: '细节特写', lifestyle: '人物使用场景' };
+      var set = { id: S.uid('mockimg'), status: 'unclassified', gallery: 'unclassified', style: args.style, styleLabel: names[args.style], subject: args.subject, count: args.count, createdAt: S.now(), listingTitle: args.listing.title, listing: args.listing, images: [] };
+      for (var i = 0; i < args.count; i++) set.images.push({ id: S.uid('mock'), index: i + 1, tone: ['#f5f7fb', '#e9eef8', '#fcecef', '#eef8f3'][i % 4] });
+      S.saveMockImageSet(set); U.toast('ok', 'Mock 生图完成', args.count + ' 套已进入图片库待筛选'); App.go('imageLibrary');
+    },
     doExport: function (r) {
       var schema = S.schemaForListing(lf.category);
       var payload = r.platform === 'amazon'
