@@ -112,10 +112,13 @@
   };
 
   function kpi(label, value, sub, subCls, icon, bg, color) {
+    // 注意 sub 不转义：它可能内嵌 U.icon() 返回的 SVG（如订单趋势箭头）。
+    // 但 sub 必须只由本文件内部拼装（数字 + 图标 + 固定文案），
+    // 绝对不能把用户输入 / 接口字段直接塞进来，否则会有 XSS 风险。
     return '<div class="card kpi"><div class="k-ic" style="background:' + bg + ';color:' + color + '">' + U.icon(icon, 22) + '</div>' +
       '<div class="k-label">' + esc(label) + '</div>' +
       '<div class="k-value">' + value + '</div>' +
-      '<div class="k-sub ' + (subCls || '') + '">' + esc(sub) + '</div></div>';
+      '<div class="k-sub ' + (subCls || '') + '">' + sub + '</div></div>';
   }
   function statLine(k, v) {
     return '<div class="stat-line"><span style="color:var(--text-2)">' + esc(k) + '</span><span class="v">' + esc(v) + '</span></div>';

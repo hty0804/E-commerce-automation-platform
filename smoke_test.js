@@ -55,18 +55,32 @@ catch (e) { ok('login ok', false); console.log('  -> ' + e.message); }
 // render every view
 const viewKeys = Object.keys(V || {});
 let rendered = 0;
+const renderedHtml = {};
 for (const k of viewKeys) {
   try {
     const v = V[k];
     const out = v.render();
     if (v.mount) v.mount();
-    if (typeof out === 'string' && out.length > 0) rendered++;
+    if (typeof out === 'string' && out.length > 0) { rendered++; renderedHtml[k] = out; }
     else fails.push('view ' + k + ' empty');
   } catch (e) {
     fail++; fails.push('view ' + k + ' threw: ' + e.message);
   }
 }
 ok('all ' + viewKeys.length + ' views render', rendered === viewKeys.length);
+
+/* ---------- 图标渲染回归 ----------
+ * 之前踩过两次坑，这里钉死：
+ *  1) kpi() 拿到图标名却忘了调 U.icon()，结果把 'bell'/'cart' 当文本渲染；
+ *  2) sub 被 esc() 转义，内嵌的 SVG 变成 &lt;svg ...&gt; 源码漏在页面上。
+ */
+const allHtml = Object.keys(renderedHtml).map(k => renderedHtml[k]).join('');
+ok('没有转义后的 SVG 源码漏出(&lt;svg)', !/&lt;svg/.test(allHtml));
+ok('确实渲染出了内联 SVG 图标', /<svg class="ic-svg"/.test(allHtml));
+['bell', 'box', 'cart', 'gear'].forEach(function (nm) {
+  ok('KPI 未把图标名 "' + nm + '" 当文本渲染',
+     !new RegExp('>' + nm + '<').test(allHtml));
+});
 
 // v2 -> v3 migration (realistic seed: current v3 DB, downgraded to v2)
 try {
