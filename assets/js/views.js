@@ -150,7 +150,7 @@
   /* ==========================================================
    * 2. 图片库（后端 API + 人工筛选）
    * ========================================================== */
-  var imageLibraryState = { gallery: 'unclassified', style: '', items: [], stats: null, error: '', loading: false };
+  var imageLibraryState = { gallery: 'unclassified', style: '', items: [], stats: null, error: '', loading: false, loaded: false };
 
   function imageApiBase() {
     var s = S.get().settings || {};
@@ -206,7 +206,7 @@
       var reload = $('#imageReload'); if (reload) reload.onclick = function () { self.load(); };
       $$('[data-image-action]').forEach(function (btn) { btn.onclick = function () { self.mark(btn.dataset.imageId, btn.dataset.imageAction); }; });
       // file:// 冒烟 / 离线打开时没有 fetch：先渲染明确离线态，不抛异常。
-      if (!imageLibraryState.items.length && !imageLibraryState.error && !imageLibraryState.loading) {
+      if (!imageLibraryState.loaded && !imageLibraryState.error && !imageLibraryState.loading) {
         if (typeof globalThis.fetch !== 'function') { imageLibraryState.error = '当前环境不支持 fetch；请使用浏览器打开，或启动图片库 API。'; App.refresh(); }
         else self.load();
       }
@@ -214,7 +214,7 @@
     load: function () {
       var self = this; imageLibraryState.loading = true; imageLibraryState.error = ''; App.refresh();
       Promise.all([imageApi('/api/images/stats'), imageApi('/api/images?gallery=' + encodeURIComponent(imageLibraryState.gallery) + '&style=' + encodeURIComponent(imageLibraryState.style) + '&limit=100')]).then(function (r) {
-        imageLibraryState.stats = r[0]; imageLibraryState.items = r[1].items || []; imageLibraryState.loading = false; App.refresh();
+        imageLibraryState.stats = r[0]; imageLibraryState.items = r[1].items || []; imageLibraryState.loading = false; imageLibraryState.loaded = true; App.refresh();
       }).catch(function (e) { imageLibraryState.loading = false; imageLibraryState.error = e.message || '请求图片库失败'; App.refresh(); });
     },
     mark: function (id, gallery) {
