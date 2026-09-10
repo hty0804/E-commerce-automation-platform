@@ -93,6 +93,7 @@ try {
   const d = S.get();
   ok('v2->v3 bumps to version 3', d.version === 3);
   ok('v2->v3 adds listing settings', !!(d.settings && d.settings.listing));
+  ok('v2->v3 adds image library settings', !!(d.settings && d.settings.imageLibrary));
   ok('v2->v3 preserves stats', !!(d.stats && typeof d.stats.totalRuns === 'number'));
 } catch (e) { ok('v2->v3 migration', false); console.log('  -> ' + e.message + '\n' + e.stack); }
 

@@ -174,6 +174,10 @@ IMAGE_STORE_MAX_BYTES = _int("IMAGE_STORE_MAX_BYTES", 20 * 1024 * 1024)
 IMAGE_STORE_TIMEOUT = _int("IMAGE_STORE_TIMEOUT", 60)  # 下载单张的超时秒数
 # 图片库索引与图片文件分离:图片体积大放 IMAGE_STORE_DIR,SQLite 只记元数据和路径。
 IMAGE_LIBRARY_DB = os.getenv("IMAGE_LIBRARY_DB") or os.path.join(_HERE, "image_library.db")
+# 图片库 HTTP API 端口。纯静态前端可直接打开；配置 API_BASE_URL 后连接此服务。
+IMAGE_API_HOST = os.getenv("IMAGE_API_HOST", "127.0.0.1")
+IMAGE_API_PORT = _int("IMAGE_API_PORT", 8765)
+IMAGE_API_CORS_ORIGINS = os.getenv("IMAGE_API_CORS_ORIGINS", "*")
 # 少于这个数量的爆款图不参与风格反哺,防止单张偶然好图劫持全店风格。
 IMAGE_HOT_MIN_SAMPLES = _int("IMAGE_HOT_MIN_SAMPLES", 3)
 IMAGE_HOT_FEEDBACK_MAX_CHARS = _int("IMAGE_HOT_FEEDBACK_MAX_CHARS", 500)

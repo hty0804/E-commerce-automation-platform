@@ -23,6 +23,11 @@ import image_gen     # noqa: E402
 import image_library # noqa: E402
 
 
+def test_placeholder():
+    # 保留文件可被 discover 导入
+    return True
+
+
 class TestImageLibrary(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

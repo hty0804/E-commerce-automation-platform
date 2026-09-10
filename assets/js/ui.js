@@ -43,7 +43,8 @@
     dollar: '<circle cx="12" cy="12" r="9"/><path d="M12 7v10"/><path d="M14.6 9.3C14 8.5 13 8 12 8c-1.6 0-2.6 1-2.6 2.1 0 1.4 2 1.9 2.6 2.4.6.5 2.6 1 2.6 2.5S13.6 18 12 18c-1 0-2-.5-2.6-1.4"/>',
     clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>',
     plug: '<path d="M9 2v6M15 2v6M7 8h10v3a5 5 0 0 1-10 0z"/><path d="M12 16v6"/>',
-    help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.2a2.5 2.5 0 0 1 4.2 1.8c0 1.6-2 2.2-2 3.6"/><circle cx="12" cy="17" r="1.1" fill="currentColor" stroke="none"/>'
+    help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.2a2.5 2.5 0 0 1 4.2 1.8c0 1.6-2 2.2-2 3.6"/><circle cx="12" cy="17" r="1.1" fill="currentColor" stroke="none"/>',
+    image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9" r="1.5"/><path d="m4 17 5-5 3.5 3 2.5-2 5 5"/>'
   };
 
   function icon(name, size) {

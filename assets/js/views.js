@@ -148,7 +148,86 @@
   }
 
   /* ==========================================================
-   * 2. 商品管理
+   * 2. 图片库（后端 API + 人工筛选）
+   * ========================================================== */
+  var imageLibraryState = { gallery: 'unclassified', style: '', items: [], stats: null, error: '', loading: false };
+
+  function imageApiBase() {
+    var s = S.get().settings || {};
+    return String((s.imageLibrary && s.imageLibrary.apiBaseUrl) || '').replace(/\/$/, '');
+  }
+  function imageApi(path, opts) {
+    return fetch(imageApiBase() + path, opts || {}).then(function (r) {
+      return r.json().then(function (data) {
+        if (!r.ok || !data.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        return data;
+      });
+    });
+  }
+  function galleryLabel(g) { return g === 'hot' ? '爆款图库' : g === 'normal' ? '普通图库' : '待筛选'; }
+  function galleryTag(g) {
+    var cls = g === 'hot' ? 'tag-red' : g === 'normal' ? 'tag-blue' : 'tag-gray';
+    return '<span class="tag ' + cls + '">' + esc(galleryLabel(g)) + '</span>';
+  }
+  function imageLibraryCard(item) {
+    var base = imageApiBase();
+    var src = base + '/media/' + encodeURIComponent(item.file_name || '');
+    return '<div class="card image-asset-card">' +
+      '<div class="image-asset-preview"><img src="' + esc(src) + '" alt="' + esc(item.subject || item.file_name) + '" loading="lazy" onerror="this.parentNode.classList.add(\'image-broken\')" /></div>' +
+      '<div class="image-asset-body"><div class="row-between"><b>' + esc(item.style_label || item.style || '未设置风格') + '</b>' + galleryTag(item.gallery) + '</div>' +
+      '<div class="cell-sub image-subject">' + esc(item.subject || '未记录商品主体') + '</div>' +
+      '<div class="image-meta">' + esc(item.aspect_ratio || '-') + ' · ' + esc(item.size || '-') + ' · ' + Math.round((item.bytes || 0) / 1024) + ' KB</div>' +
+      '<div class="image-actions">' +
+      '<button class="btn btn-sm btn-primary" data-image-action="hot" data-image-id="' + item.id + '">' + U.icon('bolt', 14) + ' 爆款</button>' +
+      '<button class="btn btn-sm" data-image-action="normal" data-image-id="' + item.id + '">普通</button>' +
+      (item.gallery !== 'unclassified' ? '<button class="btn btn-sm" data-image-action="unclassified" data-image-id="' + item.id + '">撤回待筛选</button>' : '') +
+      '</div></div></div>';
+  }
+  var imageLibrary = {
+    title: '图片库', desc: '查看生图结果，人工筛选并让爆款风格反哺后续生图',
+    render: function () {
+      var st = imageLibraryState, stats = st.stats || { total: 0, unclassified: 0, hot: 0, normal: 0 };
+      if (st.error) return '<div class="card"><div class="offline-state">' + U.icon('plug', 32) + '<h3>图片库 API 未连接</h3><p>' + esc(st.error) + '</p><p class="hint">请启动 <code>python python_backend/image_api.py</code>，并在系统设置中填写 API 地址。</p></div></div>';
+      var items = st.items || [];
+      return '<div class="grid grid-4 mb16 image-stats">' +
+        '<div class="card stat-card"><div class="cell-sub">待人工筛选</div><b>' + stats.unclassified + '</b></div>' +
+        '<div class="card stat-card hot-stat"><div class="cell-sub">爆款图库</div><b>' + stats.hot + '</b></div>' +
+        '<div class="card stat-card"><div class="cell-sub">普通图库</div><b>' + stats.normal + '</b></div>' +
+        '<div class="card stat-card"><div class="cell-sub">图片总数</div><b>' + stats.total + '</b></div></div>' +
+        '<div class="card mb16"><div class="filter-bar"><select class="select" id="imageGalleryFilter">' +
+        ['unclassified:待筛选', 'hot:爆款图库', 'normal:普通图库'].map(function (x) { var a = x.split(':'); return '<option value="' + a[0] + '"' + (st.gallery === a[0] ? ' selected' : '') + '>' + a[1] + '</option>'; }).join('') +
+        '</select><input class="input" id="imageStyleFilter" value="' + esc(st.style) + '" placeholder="按 style 筛选（可选）" style="max-width:220px" /><button class="btn btn-sm" id="imageReload">刷新</button><span class="desc" style="margin-left:auto">爆款达到样本门槛后自动反哺风格</span></div></div>' +
+        (st.loading ? '<div class="card"><div class="loading-state">正在读取图片库...</div></div>' : items.length ? '<div class="image-grid">' + items.map(imageLibraryCard).join('') + '</div>' : '<div class="card">' + empty(st.gallery === 'unclassified' ? '暂无待筛选图片' : '这个图库还没有图片') + '</div>');
+    },
+    mount: function () {
+      var self = this;
+      var gf = $('#imageGalleryFilter'); if (gf) gf.onchange = function () { imageLibraryState.gallery = gf.value; self.load(); };
+      var sf = $('#imageStyleFilter'); if (sf) sf.onchange = function () { imageLibraryState.style = sf.value.trim(); self.load(); };
+      var reload = $('#imageReload'); if (reload) reload.onclick = function () { self.load(); };
+      $$('[data-image-action]').forEach(function (btn) { btn.onclick = function () { self.mark(btn.dataset.imageId, btn.dataset.imageAction); }; });
+      // file:// 冒烟 / 离线打开时没有 fetch：先渲染明确离线态，不抛异常。
+      if (!imageLibraryState.items.length && !imageLibraryState.error && !imageLibraryState.loading) {
+        if (typeof globalThis.fetch !== 'function') { imageLibraryState.error = '当前环境不支持 fetch；请使用浏览器打开，或启动图片库 API。'; App.refresh(); }
+        else self.load();
+      }
+    },
+    load: function () {
+      var self = this; imageLibraryState.loading = true; imageLibraryState.error = ''; App.refresh();
+      Promise.all([imageApi('/api/images/stats'), imageApi('/api/images?gallery=' + encodeURIComponent(imageLibraryState.gallery) + '&style=' + encodeURIComponent(imageLibraryState.style) + '&limit=100')]).then(function (r) {
+        imageLibraryState.stats = r[0]; imageLibraryState.items = r[1].items || []; imageLibraryState.loading = false; App.refresh();
+      }).catch(function (e) { imageLibraryState.loading = false; imageLibraryState.error = e.message || '请求图片库失败'; App.refresh(); });
+    },
+    mark: function (id, gallery) {
+      var guidance = gallery === 'hot' ? prompt('填写这张爆款图的视觉锚点（可选）', '柔和暖光; 构图留白; 产品主体突出') : '';
+      if (gallery === 'hot' && guidance === null) return;
+      imageApi('/api/images/' + id + '/mark', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ gallery: gallery, style_guidance: guidance || '' }) }).then(function () {
+        U.toast('ok', '筛选已保存', galleryLabel(gallery)); self.load();
+      }).catch(function (e) { U.toast('err', '筛选失败', e.message); });
+    }
+  };
+
+  /* ==========================================================
+   * 3. 商品管理
    * ========================================================== */
   var pf = { q: '', platform: '', status: '', page: 1, size: 8, selected: {} };
 
@@ -1095,6 +1174,12 @@
         '</div></div>';
 
       var lsc = s.listing || {};
+      var ilc = s.imageLibrary || {};
+      html += '<div class="card mb16"><div class="card-head"><h3>图片库 API</h3><span class="desc">后端图片转存、人工筛选与爆款风格反哺</span></div>' +
+        '<div class="card-body"><div class="field-row"><div class="field"><label>API 地址</label><input class="input" id="imageApiBase" value="' + esc(ilc.apiBaseUrl || '') + '" placeholder="http://127.0.0.1:8765" /></div>' +
+        '<div class="field"><label>服务启动命令</label><div class="code-block" style="margin-top:0">python python_backend/image_api.py</div></div></div>' +
+        '<div class="hint">图片库页面不会伪造数据：API 未连接时只显示离线状态。方舟图片 URL 只有 24 小时有效，后端会先转存本地再进入图库。</div>' +
+        '<div class="row-between mt16"><span></span><button class="btn btn-primary" id="saveImageApi">保存图片库配置</button></div></div></div>';
       html += '<div class="card mb16"><div class="card-head"><h3>Listing 生成（上架环节）</h3>' +
         '<span class="desc">这是大模型性价比最高的场景：中文商品信息 → 可上架文案</span></div>' +
         '<div class="card-body">' +
@@ -1185,6 +1270,11 @@
         } else {
           U.toast('ok', '配置已就绪', '真实调用在 Python 后端进行（避免密钥暴露在浏览器与跨域问题）');
         }
+      };
+      var sia = $('#saveImageApi');
+      if (sia) sia.onclick = function () {
+        S.updateSettings({ imageLibrary: { apiBaseUrl: ($('#imageApiBase').value || '').trim().replace(/\/$/, '') } });
+        U.toast('ok', '图片库配置已保存', '打开图片库即可测试连接');
       };
       var sls = $('#saveLs');
       if (sls) sls.onclick = function () {
@@ -1296,6 +1386,6 @@
   global.Views = {
     dashboard: dashboard, products: products, listing: listing,
     tasks: tasks, alerts: alerts,
-    logs: logs, credentials: credentials, settings: settings, deploy: deploy
+    logs: logs, credentials: credentials, settings: settings, deploy: deploy, imageLibrary: imageLibrary
   };
 })(window);

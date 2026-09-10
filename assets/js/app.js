@@ -12,6 +12,7 @@
       group: '运营', items: [
         { key: 'products', name: '商品管理', icon: 'box' },
         { key: 'listing', name: 'AI 生成 Listing', icon: 'robot' },
+        { key: 'imageLibrary', name: '图片库', icon: 'image' },
         { key: 'tasks', name: '监控任务', icon: 'gear' }
       ]
     },

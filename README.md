@@ -308,6 +308,31 @@ req = image_gen.build_image_request({
 | `IMAGE_HOT_MIN_SAMPLES` | `3` | 同风格爆款最小样本数 |
 | `IMAGE_HOT_FEEDBACK_MAX_CHARS` | `500` | 反哺提示最大长度 |
 
+### 前端图片库 HTTP API
+
+前端已经接入 `python_backend/image_api.py`，图片库页面可以直接查看转存图片、按待筛选/爆款/普通过滤，并点击「爆款」或「普通」。
+
+启动后端 API：
+
+```bash
+python python_backend/image_api.py
+```
+
+默认监听 `127.0.0.1:8765`。登录控制台后，在「系统设置 → 图片库 API」填写地址（默认已填 `http://127.0.0.1:8765`），然后打开左侧「图片库」。
+
+接口：
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| GET | `/api/images?gallery=hot&style=scene` | 图片列表 |
+| GET | `/api/images/stats` | 待筛选 / 爆款 / 普通统计 |
+| GET | `/api/images/feedback?style=scene` | 查看爆款风格反馈 |
+| POST | `/api/images/{id}/mark` | 人工标记 gallery 与视觉锚点 |
+| DELETE | `/api/images/{id}` | 删除图库索引，不删除本地图片 |
+| GET | `/media/{file_name}` | 读取本地转存图片 |
+
+默认 API 不可连接时，前端显示明确「图片库 API 未连接」状态，不会用假数据冒充真实图库。`/media/` 只允许图片文件 basename，阻止路径穿越；CORS、端口和监听地址可通过 `IMAGE_API_CORS_ORIGINS` / `IMAGE_API_PORT` / `IMAGE_API_HOST` 配置。
+
 自检脚本加了 `--save`，一次跑通「真实生图 → 下载落盘」：
 
 ```bash
