@@ -43,18 +43,18 @@
    *   分类用规则(可复现),建议可由大模型生成(可选、可降级)
    * ========================================================== */
   var CATEGORIES = {
-    stockout: { name: '已断货', emoji: '🚨', tag: 'tag-red' },
-    stockout_risk: { name: '断货风险', emoji: '⚠️', tag: 'tag-yellow' },
-    inventory_drop: { name: '库存异常下降', emoji: '📉', tag: 'tag-yellow' },
-    demand_drop: { name: '订单量下滑', emoji: '📉', tag: 'tag-orange' },
-    price_anomaly: { name: '价格异常波动', emoji: '💰', tag: 'tag-purple' },
-    auth_failure: { name: '鉴权失败', emoji: '🔑', tag: 'tag-red' },
-    rate_limit: { name: '触发接口限流', emoji: '🐢', tag: 'tag-yellow' },
-    api_error: { name: '接口调用失败', emoji: '🔌', tag: 'tag-red' },
-    listing_failed: { name: '商品上架失败', emoji: '📦', tag: 'tag-red' },
-    data_missing: { name: '数据缺失', emoji: '🕳', tag: 'tag-gray' },
-    notice: { name: '系统通知', emoji: 'ℹ️', tag: 'tag-blue' },
-    unknown: { name: '未分类异常', emoji: '❓', tag: 'tag-gray' }
+    stockout: { name: '已断货', icon: 'alert', tag: 'tag-red' },
+    stockout_risk: { name: '断货风险', icon: 'warn', tag: 'tag-yellow' },
+    inventory_drop: { name: '库存异常下降', icon: 'trend-down', tag: 'tag-yellow' },
+    demand_drop: { name: '订单量下滑', icon: 'trend-down', tag: 'tag-orange' },
+    price_anomaly: { name: '价格异常波动', icon: 'dollar', tag: 'tag-purple' },
+    auth_failure: { name: '鉴权失败', icon: 'key', tag: 'tag-red' },
+    rate_limit: { name: '触发接口限流', icon: 'clock', tag: 'tag-yellow' },
+    api_error: { name: '接口调用失败', icon: 'plug', tag: 'tag-red' },
+    listing_failed: { name: '商品上架失败', icon: 'box', tag: 'tag-red' },
+    data_missing: { name: '数据缺失', icon: 'help', tag: 'tag-gray' },
+    notice: { name: '系统通知', icon: 'info', tag: 'tag-blue' },
+    unknown: { name: '未分类异常', icon: 'help', tag: 'tag-gray' }
   };
 
   var ADVICE = {
@@ -823,7 +823,7 @@
     });
 
     if (anomalies.length) {
-      pushedTo = pushAlerts('🚨 电商数据监控告警\n' + anomalies.map(function (a) { return '· ' + a.title + '：' + a.message; }).join('\n'));
+      pushedTo = pushAlerts('电商数据监控告警\n' + anomalies.map(function (a) { return '· ' + a.title + '：' + a.message; }).join('\n'));
       d.alerts.slice(0, anomalies.length).forEach(function (al) { al.pushed = pushedTo.length > 0; });
     }
 
@@ -925,7 +925,7 @@
         addLog('error', 'listing', (p.platform === 'amazon' ? '亚马逊' : '拼多多') + ' ' + p.sku + ' 上架失败：类目属性不完整');
         var llmOn = !!(d.settings.llm && d.settings.llm.simulate);
         d.alerts.unshift({
-          id: uid('a'), level: 'critical', platform: p.platform, title: '⚠️ 商品上架失败: ' + p.sku,
+          id: uid('a'), level: 'critical', platform: p.platform, title: '商品上架失败: ' + p.sku,
           message: '类目必填属性缺失（item_name / product_type），请补全后重试',
           category: 'listing_failed',
           advice: buildAdvice('listing_failed', { obj: p.sku }, llmOn),

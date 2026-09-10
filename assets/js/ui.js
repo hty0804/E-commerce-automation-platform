@@ -12,13 +12,53 @@
     });
   }
 
+  /* ---------------- 统一内联 SVG 图标集 ----------------
+   * 24x24 viewBox / 描边风格 / currentColor 着色，零 CDN、零 emoji、零图标字体。
+   * 每个图标只存内部路径，icon() 负责包裹 <svg>。size 默认为 20px。 */
+  var ICONS = {
+    dashboard: '<rect x="3" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.6"/>',
+    box: '<path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="M3 8l9 5 9-5"/><path d="M12 13v8"/>',
+    robot: '<rect x="4" y="8" width="16" height="12" rx="2.4"/><path d="M12 8V4"/><circle cx="12" cy="3" r="1.4"/><circle cx="9" cy="14" r="1.3"/><circle cx="15" cy="14" r="1.3"/><path d="M9.5 17h5"/>',
+    gear: '<path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 13.5a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/>',
+    bell: '<path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/>',
+    bellOff: '<path d="M8.7 3.7A6 6 0 0 1 18 8c0 7 3 9 3 9H8"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/><path d="M3 3l18 18"/>',
+    list: '<line x1="9" y1="6" x2="20" y2="6"/><line x1="9" y1="12" x2="20" y2="12"/><line x1="9" y1="18" x2="20" y2="18"/><circle cx="4.5" cy="6" r="1.1"/><circle cx="4.5" cy="12" r="1.1"/><circle cx="4.5" cy="18" r="1.1"/>',
+    key: '<circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.5 12.5 21 2"/><path d="M16 7l3 3"/>',
+    sliders: '<line x1="4" y1="6" x2="20" y2="6"/><circle cx="9" cy="6" r="2.4" fill="currentColor" stroke="none"/><line x1="4" y1="12" x2="20" y2="12"/><circle cx="15" cy="12" r="2.4" fill="currentColor" stroke="none"/><line x1="4" y1="18" x2="20" y2="18"/><circle cx="7" cy="18" r="2.4" fill="currentColor" stroke="none"/>',
+    book: '<path d="M5 4h11a2 2 0 0 1 2 2v13a1 1 0 0 1-1 1H6a2 2 0 0 0-2 2V4z"/><line x1="8.5" y1="8" x2="14" y2="8"/><line x1="8.5" y1="12" x2="14" y2="12"/>',
+    cart: '<circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/><path d="M2 3h3l2.6 13h12l2-9H6"/>',
+    eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>',
+    menu: '<line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>',
+    play: '<path d="M8 5.5v13l11-6.5z" fill="currentColor" stroke="none"/>',
+    check: '<circle cx="12" cy="12" r="9"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/>',
+    cross: '<circle cx="12" cy="12" r="9"/><line x1="9" y1="9" x2="15" y2="15"/><line x1="15" y1="9" x2="9" y2="15"/>',
+    warn: '<path d="M12 3 2 20h20z"/><line x1="12" y1="9" x2="12" y2="14"/><circle cx="12" cy="17" r="1.1" fill="currentColor" stroke="none"/>',
+    info: '<circle cx="12" cy="12" r="9"/><line x1="12" y1="11" x2="12" y2="16"/><circle cx="12" cy="8" r="1.1" fill="currentColor" stroke="none"/>',
+    trendUp: '<path d="M3 17l6-6 4 4 8-8"/><path d="M21 7v6h-6"/>',
+    trendDown: '<path d="M3 7l6 6 4-4 8 8"/><path d="M21 17v-6h-6"/>',
+    doc: '<path d="M6 2h8l6 6v14H6z"/><path d="M14 2v6h6"/><line x1="9.5" y1="13" x2="15" y2="13"/><line x1="9.5" y1="17" x2="15" y2="17"/>',
+    bolt: '<path d="M13 2 4 14h7l-1 8 9-12h-7z" fill="currentColor" stroke="none"/>',
+    folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+    alert: '<path d="M6 18V11a6 6 0 0 1 12 0v7l2 1.5V21H4v-1.5z"/><path d="M10 21a2 2 0 0 0 4 0"/><line x1="12" y1="7" x2="12" y2="4"/>',
+    dollar: '<circle cx="12" cy="12" r="9"/><path d="M12 7v10"/><path d="M14.6 9.3C14 8.5 13 8 12 8c-1.6 0-2.6 1-2.6 2.1 0 1.4 2 1.9 2.6 2.4.6.5 2.6 1 2.6 2.5S13.6 18 12 18c-1 0-2-.5-2.6-1.4"/>',
+    clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>',
+    plug: '<path d="M9 2v6M15 2v6M7 8h10v3a5 5 0 0 1-10 0z"/><path d="M12 16v6"/>',
+    help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.2a2.5 2.5 0 0 1 4.2 1.8c0 1.6-2 2.2-2 3.6"/><circle cx="12" cy="17" r="1.1" fill="currentColor" stroke="none"/>'
+  };
+
+  function icon(name, size) {
+    size = size || 20;
+    var p = ICONS[name] || ICONS.folder;
+    return '<svg class="ic-svg" width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + p + '</svg>';
+  }
+
   /* ---------------- Toast ---------------- */
   function toast(type, title, msg, ms) {
     var root = document.getElementById('toastRoot');
-    var icons = { ok: '✅', err: '⛔', warn: '⚠️', info: 'ℹ️' };
+    var icons = { ok: 'check', err: 'cross', warn: 'warn', info: 'info' };
     var el = document.createElement('div');
     el.className = 'toast ' + (type === 'ok' ? 'ok' : type === 'err' ? 'err' : type === 'warn' ? 'warn' : '');
-    el.innerHTML = '<div class="t-ic">' + (icons[type] || icons.info) + '</div><div><div class="t-title">' +
+    el.innerHTML = '<div class="t-ic">' + icon(icons[type] || 'info', 20) + '</div><div><div class="t-title">' +
       esc(title) + '</div>' + (msg ? '<div class="t-msg">' + esc(msg) + '</div>' : '') + '</div>';
     root.appendChild(el);
     setTimeout(function () {
@@ -244,7 +284,7 @@
   }
 
   global.UI = {
-    esc: esc, toast: toast, modal: modal, confirm: confirm,
+    esc: esc, icon: icon, toast: toast, modal: modal, confirm: confirm,
     platformTag: platformTag, platformName: platformName, statusTag: statusTag, levelTag: levelTag, metricTag: metricTag,
     lineChart: lineChart, barChart: barChart, donut: donut, sparkline: sparkline, colors: C
   };

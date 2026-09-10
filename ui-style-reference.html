@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>电商 SOP 工作台 · UI 风格参考板</title>
+<style>
+  :root{
+    --bg:#f5f6f8; --card:#ffffff; --ink:#1f2430; --sub:#6b7280;
+    --line:#e5e7eb; --accent:#2563eb; --accent2:#7c3aed;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    background:var(--bg);color:var(--ink);line-height:1.55}
+  header{padding:32px 28px 18px;background:linear-gradient(120deg,#0f172a,#1e293b);color:#fff}
+  header h1{margin:0 0 6px;font-size:22px;font-weight:700}
+  header p{margin:0;color:#cbd5e1;font-size:14px;max-width:860px}
+  .wrap{max-width:1180px;margin:0 auto;padding:24px 20px 60px}
+  .section-title{font-size:16px;font-weight:700;margin:30px 0 14px;display:flex;align-items:center;gap:10px}
+  .section-title .dot{width:10px;height:10px;border-radius:3px;background:var(--accent)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:18px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden;
+    box-shadow:0 1px 3px rgba(16,24,40,.06);display:flex;flex-direction:column}
+  .card .num{position:absolute;margin:10px;width:26px;height:26px;border-radius:50%;background:var(--accent);
+    color:#fff;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;z-index:2}
+  .card .media{position:relative;background:#eef1f5;border-bottom:1px solid var(--line)}
+  .card .media img{display:block;width:100%;height:auto}
+  .card .body{padding:14px 16px 16px}
+  .card h3{margin:0 0 4px;font-size:15px}
+  .tags{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+  .tag{font-size:11px;padding:2px 8px;border-radius:999px;background:#eef2ff;color:#3730a3}
+  .why{font-size:12.5px;color:var(--sub);margin:6px 0 0}
+  .links{font-size:12px;margin-top:8px}
+  .links a{color:var(--accent);text-decoration:none}
+  .links a:hover{text-decoration:underline}
+  .foot{margin-top:34px;padding:18px 20px;background:#fff;border:1px dashed var(--line);border-radius:12px;font-size:13px;color:var(--sub)}
+  .foot b{color:var(--ink)}
+  svg{display:block}
+</style>
+</head>
+<body>
+<header>
+  <h1>电商 SOP 工作台 · UI 风格参考板</h1>
+  <p>下方是与「亚马逊/拼多多跨境卖家日常运营后台」工作内容最接近的工作台界面，以及一批可借鉴视觉风格的现成模板。
+     每张卡片右上角有编号，挑一个方向回复我（编号或名字即可），我按它重做前端 UI 与图标。</p>
+</header>
+
+<div class="wrap">
+
+  <div class="section-title"><span class="dot"></span>一、同类工作台真实界面（工作内容最接近）</div>
+  <div class="grid">
+
+    <!-- 1 Amazon Seller Central -->
+    <div class="card">
+      <div class="num">1</div>
+      <div class="media">
+        <svg viewBox="0 0 800 470" width="100%" xmlns="http://www.w3.org/2000/svg">
+          <rect width="800" height="470" fill="#fff"/>
+          <rect width="800" height="46" fill="#232f3e"/>
+          <rect x="16" y="13" width="120" height="20" rx="4" fill="#ff9900"/>
+          <rect x="160" y="11" width="380" height="24" rx="6" fill="#37475a"/>
+          <rect x="640" y="11" width="80" height="24" rx="6" fill="#37475a"/>
+          <rect x="736" y="11" width="52" height="24" rx="6" fill="#ff9900"/>
+          <rect x="0" y="46" width="170" height="424" fill="#fafafa" stroke="#eee"/>
+          <rect x="14" y="64" width="142" height="22" rx="5" fill="#232f3e"/>
+          <rect x="14" y="96" width="142" height="18" rx="4" fill="#e3e6e8"/>
+          <rect x="14" y="120" width="142" height="18" rx="4" fill="#e3e6e8"/>
+          <rect x="14" y="144" width="142" height="18" rx="4" fill="#e3e6e8"/>
+          <rect x="14" y="168" width="142" height="18" rx="4" fill="#e3e6e8"/>
+          <text x="180" y="74" fill="#232f3e" font-size="18" font-weight="700">Home</text>
+          <text x="180" y="92" fill="#888" font-size="11">Global Snapshot</text>
+          <g>
+            <rect x="180" y="104" width="180" height="92" rx="10" fill="#fff" stroke="#e5e7eb"/>
+            <rect x="200" y="120" width="80" height="10" rx="3" fill="#cbd5e1"/>
+            <rect x="200" y="142" width="120" height="26" rx="4" fill="#232f3e"/>
+            <rect x="372" y="104" width="180" height="92" rx="10" fill="#fff" stroke="#e5e7eb"/>
+            <rect x="392" y="120" width="80" height="10" rx="3" fill="#cbd5e1"/>
+            <rect x="392" y="142" width="60" height="26" rx="4" fill="#16a34a"/>
+            <rect x="564" y="104" width="180" height="92" rx="10" fill="#fff" stroke="#e5e7eb"/>
+            <rect x="584" y="120" width="80" height="10" rx="3" fill="#cbd5e1"/>
+            <rect x="584" y="142" width="90" height="26" rx="4" fill="#2563eb"/>
+            <rect x="756" y="104" width="32" height="92" rx="10" fill="#fff" stroke="#e5e7eb"/>
+          </g>
+          <text x="180" y="232" fill="#232f3e" font-size="13" font-weight="700">Product Performance</text>
+          <g>
+            <rect x="180" y="244" width="186" height="76" rx="9" fill="#fff" stroke="#e5e7eb"/>
+            <rect x="376" y="244" width="186" height="76" rx="9" fill="#fff" stroke="#e5e7eb"/>
+            <rect x="572" y="244" width="186" height="76" rx="9" fill="#fff" stroke="#e5e7eb"/>
+            <rect x="196" y="258" width="90" height="8" rx="3" fill="#cbd5e1"/>
+            <rect x="196" y="278" width="120" height="8" rx="3" fill="#e5e7eb"/>
+            <rect x="196" y="294" width="70" height="8" rx="3" fill="#e5e7eb"/>
+          </g>
+          <rect x="180" y="338" width="578" height="100" rx="10" fill="#fff" stroke="#e5e7eb"/>
+          <rect x="200" y="358" width="140" height="10" rx="3" fill="#cbd5e1"/>
+          <rect x="200" y="380" width="520" height="8" rx="3" fill="#eef1f5"/>
+          <rect x="200" y="396" width="480" height="8" rx="3" fill="#eef1f5"/>
+          <rect x="200" y="412" width="500" height="8" rx="3" fill="#eef1f5"/>
+        </svg>
+      </div>
+      <div class="body">
+        <h3>Amazon Seller Central（新版）</h3>
+        <div class="tags"><span class="tag">深色顶栏</span><span class="tag">左侧分类导航</span><span class="tag">Global Snapshot 卡片</span></div>
+        <p class="why">信息密度高、模块清晰：账户健康 / 销量 / 订单 / 消息一眼概览，下方 Product Performance 磁贴。和我们「监控总览 + 各 SKU 明细」的结构高度一致。</p>
+        <div class="links"><a href="https://wiseppc.com/blog/amazon-seller-central/" target="_blank">真实界面资料 ↗</a></div>
+      </div>
+    </div>
+
+    <!-- 2 千牛工作台 -->
+    <div class="card">
+      <div class="num">2</div>
+      <div class="media">
+        <svg viewBox="0 0 800 470" width="100%" xmlns="http://www.w3.org/2000/svg">
+          <rect width="800" height="470" fill="#fff"/>
+          <rect width="800" height="44" fill="#ff4400"/>
+          <rect x="16" y="12" width="90" height="20" rx="4" fill="#fff"/>
+          <rect x="650" y="12" width="134" height="20" rx="4" fill="#ffd9c7"/>
+          <rect x="0" y="44" width="150" height="426" fill="#fff7f3" stroke="#ffe3d6"/>
+          <circle cx="75" cy="100" r="28" fill="#ffd9c7"/>
+          <rect x="34" y="140" width="82" height="12" rx="4" fill="#ffb899"/>
+          <rect x="30" y="170" width="90" height="16" rx="4" fill="#ffe3d6"/>
+          <rect x="30" y="196" width="90" height="16" rx="4" fill="#ffe3d6"/>
+          <rect x="30" y="222" width="90" height="16" rx="4" fill="#ffe3d6"/>
+          <rect x="30" y="248" width="90" height="16" rx="4" fill="#ffe3d6"/>
+          <text x="170" y="74" fill="#222" font-size="18" font-weight="700">工作台</text>
+          <rect x="170" y="88" width="610" height="92" rx="10" fill="#fff3ee" stroke="#ffd0bd"/>
+          <rect x="190" y="104" width="120" height="10" rx="3" fill="#ff9e7a"/>
+          <rect x="190" y="126" width="90" height="22" rx="5" fill="#ff4400"/>
+          <rect x="300" y="126" width="90" height="22" rx="5" fill="#ffb899"/>
+          <rect x="410" y="126" width="90" height="22" rx="5" fill="#ffb899"/>
+          <g>
+            <rect x="170" y="196" width="196" height="104" rx="10" fill="#fff" stroke="#eee"/>
+            <rect x="190" y="212" width="80" height="9" rx="3" fill="#cbd5e1"/>
+            <rect x="190" y="232" width="150" height="8" rx="3" fill="#eef1f5"/>
+            <rect x="190" y="248" width="120" height="8" rx="3" fill="#eef1f5"/>
+            <rect x="190" y="264" width="140" height="8" rx="3" fill="#eef1f5"/>
+            <rect x="386" y="196" width="196" height="104" rx="10" fill="#fff" stroke="#eee"/>
+            <rect x="406" y="212" width="80" height="9" rx="3" fill="#cbd5e1"/>
+            <rect x="406" y="232" width="150" height="8" rx="3" fill="#eef1f5"/>
+            <rect x="406" y="248" width="120" height="8" rx="3" fill="#eef1f5"/>
+            <rect x="406" y="264" width="140" height="8" rx="3" fill="#eef1f5"/>
+            <rect x="602" y="196" width="178" height="104" rx="10" fill="#fff" stroke="#eee"/>
+            <rect x="622" y="212" width="80" height="9" rx="3" fill="#cbd5e1"/>
+            <rect x="622" y="232" width="140" height="8" rx="3" fill="#eef1f5"/>
+            <rect x="622" y="248" width="110" height="8" rx="3" fill="#eef1f5"/>
+          </g>
+          <rect x="170" y="316" width="610" height="130" rx="10" fill="#fff" stroke="#eee"/>
+          <rect x="190" y="334" width="120" height="9" rx="3" fill="#cbd5e1"/>
+          <rect x="190" y="354" width="560" height="8" rx="3" fill="#eef1f5"/>
+          <rect x="190" y="372" width="520" height="8" rx="3" fill="#eef1f5"/>
+          <rect x="190" y="390" width="540" height="8" rx="3" fill="#eef1f5"/>
+          <rect x="190" y="408" width="500" height="8" rx="3" fill="#eef1f5"/>
+        </svg>
+      </div>
+      <div class="body">
+        <h3>千牛工作台（淘宝/天猫商家）</h3>
+        <div class="tags"><span class="tag">橙色品牌色</span><span class="tag">待办+实时数据双区</span><span class="tag">模块化卡片</span></div>
+        <p class="why">典型「运营工作台」范式：顶部待办/实时指标，下面一整屏功能模块卡片。最贴近我们这种「多账号、多任务、要常看异常」的运营后台。</p>
+        <div class="links"><a href="https://www.pm-ai.cn/share/detail/prototype/980724" target="_blank">原型参考 ↗</a></div>
+      </div>
+    </div>
+
+    <!-- 3 抖店/电商罗盘 -->
+    <div class="card">
+      <div class="num">3</div>
+      <div class="media">
+        <svg viewBox="0 0 800 470" width="100%" xmlns="http://www.w3.org/2000/svg">
+          <rect width="800" height="470" fill="#f7f8fa"/>
+          <rect width="800" height="46" fill="#fe2c55"/>
+          <rect x="16" y="13" width="110" height="20" rx="4" fill="#fff"/>
+          <rect x="640" y="13" width="144" height="20" rx="4" fill="#ffd6e0"/>
+          <rect x="0" y="46" width="160" height="424" fill="#fff" stroke="#eee"/>
+          <rect x="16" y="66" width="128" height="18" rx="4" fill="#fe2c55"/>
+          <rect x="16" y="96" width="128" height="16" rx="4" fill="#eef0f3"/>
+          <rect x="16" y="120" width="128" height="16" rx="4" fill="#eef0f3"/>
+          <rect x="16" y="144" width="128" height="16" rx="4" fill="#eef0f3"/>
+          <rect x="16" y="168" width="128" height="16" rx="4" fill="#eef0f3"/>
+          <text x="180" y="74" fill="#222" font-size="18" font-weight="700">电商罗盘 · 概览</text>
+          <g>
+            <rect x="180" y="88" width="180" height="86" rx="10" fill="#fff" stroke="#eee"/>
+            <rect x="200" y="104" width="80" height="9" rx="3" fill="#cbd5e1"/>
+            <rect x="200" y="124" width="110" height="24" rx="5" fill="#fe2c55"/>
+            <rect x="372" y="88" width="180" height="86" rx="10" fill="#fff" stroke="#eee"/>
+            <rect x="392" y="104" width="80" height="9" rx="3" fill="#cbd5e1"/>
+            <rect x="392" y="124" width="80" height="24" rx="5" fill="#7c3aed"/>
+            <rect x="564" y="88" width="180" height="86" rx="10" fill="#fff" stroke="#eee"/>
+            <rect x="584" y="104" width="80" height="9" rx="3" fill="#cbd5e1"/>
+            <rect x="584" y="124" width="90" height="24" rx="5" fill="#0ea5e9"/>
+            <rect x="756" y="88" width="32" height="86" rx="10" fill="#fff" stroke="#eee"/>
+          </g>
+          <rect x="180" y="190" width="370" height="170" rx="10" fill="#fff" stroke="#eee"/>
+          <rect x="200" y="208" width="100" height="9" rx="3" fill="#cbd5e1"/>
+          <polyline points="200,330 250,300 300,312 350,270 400,288 450,250 500,262 530,238" fill="none" stroke="#fe2c55" stroke-width="3"/>
+          <rect x="566" y="190" width="194" height="170" rx="10" fill="#fff" stroke="#eee"/>
+          <rect x="586" y="208" width="100" height="9" rx="3" fill="#cbd5e1"/>
+          <g fill="#cbd5e1">
+            <rect x="586" y="232" width="154" height="14" rx="4"/>
+            <rect x="586" y="256" width="120" height="14" rx="4"/>
+            <rect x="586" y="280" width="140" height="14" rx="4"/>
+            <rect x="586" y="304" width="100" height="14" rx="4"/>
+          </g>
+          <rect x="180" y="376" width="580" height="80" rx="10" fill="#fff" stroke="#eee"/>
+          <rect x="200" y="392" width="120" height="9" rx="3" fill="#cbd5e1"/>
+          <rect x="200" y="412" width="540" height="8" rx="3" fill="#eef0f3"/>
+          <rect x="200" y="428" width="500" height="8" rx="3" fill="#eef0f3"/>
+        </svg>
+      </div>
+      <div class="body">
+        <h3>抖店 / 抖音电商罗盘</h3>
+        <div class="tags"><span class="tag">粉色强调色</span><span class="tag">数据看板</span><span class="tag">趋势折线</span></div>
+        <p class="why">以「数据概览 + 趋势图 + 排行榜」为核心，适合我们这种要把「库存/订单/广告异常」做成可观测看板的场景。</p>
+      </div>
+    </div>
+
+    <!-- 4 拼多多商家后台 -->
+    <div class="card">
+      <div class="num">4</div>
+      <div class="media">
+        <svg viewBox="0 0 800 470" width="100%" xmlns="http://www.w3.org/2000/svg">
+          <rect width="800" height="470" fill="#fff"/>
+          <rect width="800" height="46" fill="#e22e1f"/>
+          <rect x="16" y="13" width="120" height="20" rx="4" fill="#fff"/>
+          <rect x="660" y="13" width="124" height="20" rx="4" fill="#ffd5d0"/>
+          <rect x="0" y="46" width="150" height="424" fill="#fff5f4" stroke="#ffd9d5"/>
+          <rect x="16" y="66" width="118" height="18" rx="4" fill="#e22e1f"/>
+          <rect x="16" y="96" width="118" height="15" rx="4" fill="#ffe1de"/>
+          <rect x="16" y="120" width="118" height="15" rx="4" fill="#ffe1de"/>
+          <rect x="16" y="144" width="118" height="15" rx="4" fill="#ffe1de"/>
+          <rect x="16" y="168" width="118" height="15" rx="4" fill="#ffe1de"/>
+          <text x="170" y="74" fill="#222" font-size="18" font-weight="700">商家后台</text>
+          <g>
+            <rect x="170" y="88" width="186" height="88" rx="10" fill="#fff" stroke="#eee"/>
+            <rect x="190" y="104" width="80" height="9" rx="3" fill="#cbd5e1"/>
+            <rect x="190" y="126" width="100" height="22" rx="5" fill="#e22e1f"/>
+            <rect x="376" y="88" width="186" height="88" rx="10" fill="#fff" stroke="#eee"/>
+            <rect x="396" y="104" width="80" height="9" rx="3" fill="#cbd5e1"/>
+            <rect x="396" y="126" width="70" height="22" rx="5" fill="#f59e0b"/>
+            <rect x="582" y="88" width="178" height="88" rx="10" fill="#fff" stroke="#eee"/>
+            <rect x="602" y="104" width="80" height="9" rx="3" fill="#cbd5e1"/>
+            <rect x="602" y="126" width="90" height="22" rx="5" fill="#10b981"/>
+          </g>
+          <rect x="170" y="196" width="590" height="120" rx="10" fill="#fff" stroke="#eee"/>
+          <rect x="190" y="214" width="120" height="9" rx="3" fill="#cbd5e1"/>
+          <g fill="#eef1f5">
+            <rect x="190" y="234" width="540" height="9" rx="3"/>
+            <rect x="190" y="252" width="500" height="9" rx="3"/>
+            <rect x="190" y="270" width="520" height="9" rx="3"/>
+            <rect x="190" y="288" width="480" height="9" rx="3"/>
+          </g>
+          <rect x="170" y="332" width="290" height="110" rx="10" fill="#fff" stroke="#eee"/>
+          <rect x="190" y="350" width="100" height="9" rx="3" fill="#cbd5e1"/>
+          <rect x="190" y="370" width="240" height="8" rx="3" fill="#eef1f5"/>
+          <rect x="190" y="386" width="210" height="8" rx="3" fill="#eef1f5"/>
+          <rect x="190" y="402" width="230" height="8" rx="3" fill="#eef1f5"/>
+          <rect x="470" y="332" width="290" height="110" rx="10" fill="#fff" stroke="#eee"/>
+          <rect x="490" y="350" width="100" height="9" rx="3" fill="#cbd5e1"/>
+          <rect x="490" y="370" width="240" height="8" rx="3" fill="#eef1f5"/>
+          <rect x="490" y="386" width="210" height="8" rx="3" fill="#eef1f5"/>
+          <rect x="490" y="402" width="230" height="8" rx="3" fill="#eef1f5"/>
+        </svg>
+      </div>
+      <div class="body">
+        <h3>拼多多商家后台</h3>
+        <div class="tags"><span class="tag">红色品牌色</span><span class="tag">概览卡片</span><span class="tag">订单/商品/数据分区</span></div>
+        <p class="why">结构和我们现有的「库存/订单/广告监控」模块一一对应，红色警示色对异常告警很友好。我们后端本身就有拼多多（PDD）客户端，视觉上呼应也合理。</p>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="section-title"><span class="dot" style="background:var(--accent2)"></span>二、可借鉴的现成模板视觉风格（真实截图）</div>
+  <div class="grid">
+
+    <div class="card">
+      <div class="num">5</div>
+      <div class="media"><img loading="lazy" src="https://colorlib.com/wp/wp-content/uploads/sites/2/react-minimal-ui-pro-2026.jpg" alt="Larkon 浅色极简风"></div>
+      <div class="body">
+        <h3>Larkon · 浅色极简 SaaS 风</h3>
+        <div class="tags"><span class="tag">大量留白</span><span class="tag">细边框</span><span class="tag">圆角卡片</span></div>
+        <p class="why">干净、专业、不花哨。适合做「后台工具」而不是「炫酷大屏」，用户长时间看不累。</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="num">6</div>
+      <div class="media"><img loading="lazy" src="https://colorlib.com/wp/wp-content/uploads/sites/2/master-tailadmin-2026.jpg" alt="TailAdmin 风"></div>
+      <div class="body">
+        <h3>TailAdmin · 现代 Tailwind 风</h3>
+        <div class="tags"><span class="tag">左侧图标导航</span><span class="tag">统计卡 + 图表</span><span class="tag">轻量</span></div>
+        <p class="why">导航用图标+文字，主区是 KPI 卡片 + 图表，是最通用的中后台布局，改造我们现有页面成本最低。</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="num">7</div>
+      <div class="media"><img loading="lazy" src="https://colorlib.com/wp/wp-content/uploads/sites/2/master-materio-free-2026.jpg" alt="Materio MUI 风"></div>
+      <div class="body">
+        <h3>Materio (MUI) ·  Material 风</h3>
+        <div class="tags"><span class="tag">Material 组件</span><span class="tag">阴影层次</span><span class="tag">蓝紫配色</span></div>
+        <p class="why">Material Design 的规范感强，组件统一，适合做成「企业级」观感。</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="num">8</div>
+      <div class="media"><img loading="lazy" src="https://colorlib.com/wp/wp-content/uploads/sites/2/master-material-dashboard-2-react-2026.jpg" alt="Material Dashboard 深色风"></div>
+      <div class="body">
+        <h3>Material Dashboard · 深色数据风</h3>
+        <div class="tags"><span class="tag">深色背景</span><span class="tag">霓虹强调色</span><span class="tag">监控大屏感</span></div>
+        <p class="why">如果你们更想要「运维监控台」的气质，深色 + 高对比强调色最有「系统在线、一切尽在掌握」的感觉。</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="num">9</div>
+      <div class="media"><img loading="lazy" src="https://colorlib.com/wp/wp-content/uploads/sites/2/react-ant-design-pro-2026.jpg" alt="Ant Design Pro 风"></div>
+      <div class="body">
+        <h3>Ant Design Pro · 中后台标准风</h3>
+        <div class="tags"><span class="tag">国内中后台事实标准</span><span class="tag">表格强</span><span class="tag">稳重</span></div>
+        <p class="why">国内团队最熟悉的风格，表格/表单/筛选组件成熟，适合数据密集的运营后台。</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="num">10</div>
+      <div class="media"><img loading="lazy" src="https://colorlib.com/wp/wp-content/uploads/sites/2/master-metronic-2026.jpg" alt="Metronic 风"></div>
+      <div class="body">
+        <h3>Metronic · 多功能企业风</h3>
+        <div class="tags"><span class="tag">布局丰富</span><span class="tag">深浅多主题</span><span class="tag">组件全</span></div>
+        <p class="why">一套里包含浅色/深色多个主题，适合先定一个主方向、后续再扩展。</p>
+        <div class="links"><a href="https://colorlib.com/wp/ecommerce-admin-dashboard-templates/" target="_blank">更多模板合集 ↗</a></div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="foot">
+    <b>怎么选：</b>回复卡片编号（1–10）或名字即可。我会按你选的方向重做前端：
+    配色体系、侧边导航、卡片/图表样式、图标（换成统一图标库，告别现在散乱难看的图标）。
+    如果你想要「混合」——比如 <b>拼多多红色警示 + 千牛模块卡片布局 + 深色监控大屏</b>——也可以直接描述组合，我按其做一版高保真原型给你确认。
+  </div>
+
+</div>
+</body>
+</html>

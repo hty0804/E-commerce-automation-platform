@@ -11,13 +11,13 @@
 
   /* 公共：空态 */
   function empty(text, icon) {
-    return '<div class="empty"><div class="e-ic">' + (icon || '🗂') + '</div><div>' + esc(text) + '</div></div>';
+    return '<div class="empty"><div class="e-ic">' + (icon ? U.icon(icon, 34) : U.icon('folder', 34)) + '</div><div>' + esc(text) + '</div></div>';
   }
 
   /* 异常类型标签 */
   function categoryTag(cat) {
     var c = S.categoryInfo(cat);
-    return '<span class="tag ' + c.tag + '">' + c.emoji + ' ' + esc(c.name) + '</span>';
+    return '<span class="tag ' + c.tag + '">' + U.icon(c.icon, 13) + ' ' + esc(c.name) + '</span>';
   }
 
   /* 公共：分页 */
@@ -61,16 +61,16 @@
       });
 
       var trendCls = st.orderTrend >= 0 ? 'up' : 'down';
-      var trendTxt = (st.orderTrend >= 0 ? '▲ ' : '▼ ') + Math.abs(st.orderTrend).toFixed(1) + '%';
+      var trendTxt = U.icon(st.orderTrend >= 0 ? 'trend-up' : 'trend-down', 12) + ' ' + Math.abs(st.orderTrend).toFixed(1) + '%';
 
       var html = '';
 
       /* KPI */
       html += '<div class="grid grid-4 mb16">' +
-        kpi('未处理告警', st.unhandled, '共 ' + st.totalAlerts + ' 条告警记录', st.unhandled > 0 ? 'down' : '', '🔔', 'var(--danger-soft)', '#dc3a3a') +
-        kpi('在架商品', st.online, '总计 ' + st.total + ' 个 SKU', '', '📦', 'var(--primary-soft)', '#3563e9') +
-        kpi('本小时订单', st.curOrders, trendTxt + ' 环比上小时', trendCls, '🛒', '#e6f7f0', '#15a46b') +
-        kpi('运行中任务', st.running, '共 ' + st.totalTasks + ' 个监控任务', '', '⚙️', '#f1ebff', '#7c4dff') +
+        kpi('未处理告警', st.unhandled, '共 ' + st.totalAlerts + ' 条告警记录', st.unhandled > 0 ? 'down' : '', 'bell', 'var(--danger-soft)', '#dc3a3a') +
+        kpi('在架商品', st.online, '总计 ' + st.total + ' 个 SKU', '', 'box', 'var(--primary-soft)', '#fe2c55') +
+        kpi('本小时订单', st.curOrders, trendTxt + ' 环比上小时', trendCls, 'cart', '#e6f7f0', '#15a46b') +
+        kpi('运行中任务', st.running, '共 ' + st.totalTasks + ' 个监控任务', '', 'gear', '#f1ebff', '#7c4dff') +
         '</div>';
 
       /* 图表 */
@@ -198,7 +198,7 @@
             return '<tr>' +
               '<td data-label="选择"><input type="checkbox" class="pSel" data-id="' + p.id + '"' + (pf.selected[p.id] ? ' checked' : '') + ' /></td>' +
               '<td data-label="商品"><div class="cell-main">' + esc(p.title) + '</div><div class="cell-sub">' + esc(p.sku) +
-                (p.listing ? ' <span class="tag tag-purple">🤖 含 AI Listing</span>' : '') + '</div></td>' +
+                (p.listing ? ' <span class="tag tag-purple">' + U.icon('robot', 13) + ' 含 AI Listing</span>' : '') + '</div></td>' +
               '<td data-label="平台">' + U.platformTag(p.platform) + '</td>' +
               '<td data-label="类目">' + esc(p.category) + '</td>' +
               '<td data-label="价格">' + (p.currency === 'USD' ? '$' : '¥') + p.price + '</td>' +
@@ -209,7 +209,7 @@
               '<td data-label="操作">' +
                 '<button class="btn-link" data-edit="' + p.id + '">编辑</button>' +
                 '<button class="btn-link" data-pub="' + p.id + '">上架</button>' +
-                '<button class="btn-link" data-gen="' + p.id + '">🤖 生成</button>' +
+                '<button class="btn-link" data-gen="' + p.id + '">' + U.icon('robot', 15) + ' 生成</button>' +
                 '<button class="btn-link danger" data-del="' + p.id + '">删除</button>' +
               '</td></tr>';
           }).join('') +
@@ -407,17 +407,17 @@
             '<input class="input" id="lgAud" value="' + esc(lf.audience) + '" placeholder="通勤 / 出差人群" /></div>' +
         '</div>' +
         '<div class="row-between mt16">' +
-          '<div class="hint" style="margin:0">当前来源：<b>' + (llmOn ? '🤖 模拟大模型' : '📋 规则草稿') + '</b>' +
+          '<div class="hint" style="margin:0">当前来源：<b>' + (llmOn ? U.icon('robot', 13) + ' 模拟大模型' : U.icon('doc', 13) + ' 规则草稿') + '</b>' +
             '（在系统设置 → 大模型建议里切换）。真实模型调用由 Python 后端执行。</div>' +
           '<div style="display:flex;gap:8px;flex-shrink:0">' +
             '<button class="btn" id="lgDemo">填入示例</button>' +
             '<button class="btn" id="lgClear">清空</button>' +
-            '<button class="btn btn-primary" id="lgGen">🤖 生成 Listing</button>' +
+            '<button class="btn btn-primary" id="lgGen">' + U.icon('robot', 15) + ' 生成 Listing</button>' +
           '</div>' +
         '</div></div></div>';
 
       if (!r) {
-        html += '<div class="card">' + empty('填入左侧商品信息后点击「生成 Listing」', '🤖') + '</div>';
+        html += '<div class="card">' + empty('填入左侧商品信息后点击「生成 Listing」', 'robot') + '</div>';
         return html;
       }
 
@@ -426,18 +426,18 @@
       var warns = r.issues.filter(function (i) { return i.level === 'warn'; });
 
       html += '<div class="card"><div class="card-head"><h3>生成结果</h3>' +
-        '<span class="desc">' + (r.source === 'llm' ? '🤖 模拟大模型' : '📋 规则草稿') + ' · ' +
+        '<span class="desc">' + (r.source === 'llm' ? U.icon('robot', 13) + ' 模拟大模型' : U.icon('doc', 13) + ' 规则草稿') + ' · ' +
         esc(schema.productType) + ' · ' + esc(schema.node) + '</span></div><div class="card-body">' +
 
         '<div class="field"><label>校验结果 ' +
-          (errs.length ? '<span class="tag tag-red">❌ ' + errs.length + ' 项待修正</span> ' : '<span class="tag tag-green">✅ 无阻断问题</span> ') +
-          (warns.length ? '<span class="tag tag-yellow">⚠️ ' + warns.length + ' 项提示</span>' : '') +
+          (errs.length ? '<span class="tag tag-red">' + U.icon('cross', 13) + ' ' + errs.length + ' 项待修正</span> ' : '<span class="tag tag-green">' + U.icon('check', 13) + ' 无阻断问题</span> ') +
+          (warns.length ? '<span class="tag tag-yellow">' + U.icon('warn', 13) + ' ' + warns.length + ' 项提示</span>' : '') +
         '</label>' +
         (r.issues.length
           ? '<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;max-height:180px;overflow:auto">' +
             r.issues.map(function (i) {
               return '<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px dashed var(--border-2)">' +
-                '<span class="' + issueClass(i.level) + '" style="flex-shrink:0">' + (i.level === 'error' ? '❌' : '⚠️') + ' ' + esc(i.field) + '</span>' +
+                '<span class="' + issueClass(i.level) + '" style="flex-shrink:0">' + U.icon(i.level === 'error' ? 'cross' : 'warn', 13) + ' ' + esc(i.field) + '</span>' +
                 '<span style="font-size:13px">' + esc(i.msg) + '</span></div>';
             }).join('') + '</div>'
           : '<div class="hint">全部检查通过，可以直接转 payload 上架。</div>') +
@@ -630,8 +630,8 @@
           '<div style="color:var(--text-2);font-size:13px">共 <b>' + d.tasks.length + '</b> 个任务，启用 <b>' +
             d.tasks.filter(function (t) { return t.enabled; }).length + '</b> 个</div>' +
           '<div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">' +
-            '<button class="btn" id="tInject">💥 注入一次异常</button>' +
-            '<button class="btn" id="tRunAll">▶ 执行全部</button>' +
+            '<button class="btn" id="tInject">' + U.icon('bolt', 15) + ' 注入一次异常</button>' +
+            '<button class="btn" id="tRunAll">' + U.icon('play', 15) + ' 执行全部</button>' +
             '<button class="btn btn-primary" id="tAdd">+ 新建任务</button>' +
           '</div>' +
         '</div>';
@@ -782,8 +782,8 @@
           '<option value="handled"' + (af.status === 'handled' ? ' selected' : '') + '>已处理</option></select>' +
         '<select class="select" id="aCategory"><option value="">全部类型</option>' +
           Object.keys(S.CATEGORIES).map(function (k) {
-            return '<option value="' + k + '"' + (af.category === k ? ' selected' : '') + '>' +
-              S.CATEGORIES[k].emoji + ' ' + S.CATEGORIES[k].name + '</option>';
+              return '<option value="' + k + '"' + (af.category === k ? ' selected' : '') + '>' +
+              S.CATEGORIES[k].name + '</option>';
           }).join('') + '</select>' +
         '<div style="margin-left:auto;display:flex;gap:8px;align-items:center">' +
           '<span style="color:var(--text-2);font-size:13px">未处理 <b style="color:var(--danger)">' + unhandled + '</b> 条</span>' +
@@ -791,7 +791,7 @@
         '</div></div>';
 
       if (!pageList.length) {
-        html += empty('没有符合条件的告警', '🔕');
+        html += empty('没有符合条件的告警', 'bell-off');
       } else {
         html += '<div class="table-wrap"><table class="tbl"><thead><tr>' +
           '<th>等级</th><th>异常类型</th><th>标题</th><th>平台</th><th>告警内容</th><th>时间</th><th>状态</th><th>操作</th>' +
@@ -801,7 +801,7 @@
               '<td data-label="等级">' + U.levelTag(a.level) + '</td>' +
               '<td data-label="类型">' + categoryTag(a.category) + '</td>' +
               '<td data-label="标题"><div class="cell-main"><a href="javascript:void(0)" data-detail="' + a.id + '">' + esc(a.title) + '</a></div>' +
-                (a.advice ? '<div class="cell-sub">' + (a.advice.source === 'llm' ? '🤖 含 AI 建议' : '📋 含规则建议') + '</div>' : '') + '</td>' +
+                (a.advice ? '<div class="cell-sub">' + (a.advice.source === 'llm' ? U.icon('robot', 13) + ' 含 AI 建议' : U.icon('doc', 13) + ' 含规则建议') + '</div>' : '') + '</td>' +
               '<td data-label="平台">' + U.platformTag(a.platform) + '</td>' +
               '<td data-label="内容" style="max-width:320px"><div style="color:var(--text-2);font-size:12.8px;line-height:1.6">' + esc(a.message) + '</div></td>' +
               '<td data-label="时间" style="white-space:nowrap">' + S.fmtTime(a.createdAt) + '<div class="cell-sub">' + S.fromNow(a.createdAt) + '</div></td>' +
@@ -850,7 +850,7 @@
         '<div class="row-between" style="margin-bottom:10px">' +
           '<b style="font-size:14px">处理建议</b>' +
           '<span class="tag ' + (isLlm ? 'tag-purple' : 'tag-gray') + '">' +
-            (isLlm ? '🤖 大模型生成' : '📋 内置规则') + '</span>' +
+            (isLlm ? U.icon('robot', 13) + ' 大模型生成' : U.icon('doc', 13) + ' 内置规则') + '</span>' +
         '</div>' +
         adviceBlock('可能原因', adv.rootCause, 'var(--warn)') +
         adviceBlock('立即处理', adv.actions, 'var(--primary)') +

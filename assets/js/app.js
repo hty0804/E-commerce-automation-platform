@@ -7,28 +7,30 @@
   var S = global.Store, U = global.UI, V = global.Views;
 
   var NAV = [
-    { group: '概览', items: [{ key: 'dashboard', name: '数据看板', icon: '📊' }] },
+    { group: '概览', items: [{ key: 'dashboard', name: '数据看板', icon: 'dashboard' }] },
     {
       group: '运营', items: [
-        { key: 'products', name: '商品管理', icon: '📦' },
-        { key: 'listing', name: 'AI 生成 Listing', icon: '🤖' },
-        { key: 'tasks', name: '监控任务', icon: '⚙️' }
+        { key: 'products', name: '商品管理', icon: 'box' },
+        { key: 'listing', name: 'AI 生成 Listing', icon: 'robot' },
+        { key: 'tasks', name: '监控任务', icon: 'gear' }
       ]
     },
     {
       group: '监控', items: [
-        { key: 'alerts', name: '告警中心', icon: '🔔', badge: 'unhandled' },
-        { key: 'logs', name: '运行日志', icon: '📜' }
+        { key: 'alerts', name: '告警中心', icon: 'bell', badge: 'unhandled' },
+        { key: 'logs', name: '运行日志', icon: 'list' }
       ]
     },
     {
       group: '系统', items: [
-        { key: 'credentials', name: '平台与凭证', icon: '🔑' },
-        { key: 'settings', name: '系统设置', icon: '🛠' },
-        { key: 'deploy', name: '部署指南', icon: '📖' }
+        { key: 'credentials', name: '平台与凭证', icon: 'key' },
+        { key: 'settings', name: '系统设置', icon: 'sliders' },
+        { key: 'deploy', name: '部署指南', icon: 'book' }
       ]
     }
   ];
+
+  var RUN_LABEL = '<svg class="ic-svg" viewBox="0 0 24 24" width="15" height="15" fill="currentColor" stroke="none"><path d="M8 5.5v13l11-6.5z"/></svg> 立即监控';
 
   var current = 'dashboard';
   var timer = null;
@@ -80,7 +82,7 @@
       var html = NAV.map(function (g) {
         return '<div class="nav-group">' + g.group + '</div>' + g.items.map(function (it) {
           return '<div class="nav-item' + (it.key === current ? ' active' : '') + '" data-key="' + it.key + '">' +
-            '<span class="n-ic">' + it.icon + '</span><span>' + it.name + '</span>' +
+            '<span class="n-ic">' + U.icon(it.icon, 18) + '</span><span>' + it.name + '</span>' +
             (it.badge === 'unhandled' && unhandled ? '<span class="badge-mini">' + unhandled + '</span>' : '') +
             '</div>';
         }).join('');
@@ -182,7 +184,7 @@
       var demoMode = d.settings.demoMode;
       setTimeout(function () {
         var r = S.runMonitor(opts);
-        if (btn) { btn.disabled = false; btn.textContent = '▶ 立即监控'; }
+        if (btn) { btn.disabled = false; btn.innerHTML = RUN_LABEL; }
         if (r.anomalies.length) {
           U.toast('err', '发现 ' + r.anomalies.length + ' 项异常',
             r.anomalies[0].title + (r.pushedTo.length ? ' · 已推送' + r.pushedTo.join('/') : ' · 仅站内记录'));
