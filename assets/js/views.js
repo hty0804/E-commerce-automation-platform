@@ -112,7 +112,7 @@
   };
 
   function kpi(label, value, sub, subCls, icon, bg, color) {
-    return '<div class="card kpi"><div class="k-ic" style="background:' + bg + ';color:' + color + '">' + icon + '</div>' +
+    return '<div class="card kpi"><div class="k-ic" style="background:' + bg + ';color:' + color + '">' + U.icon(icon, 22) + '</div>' +
       '<div class="k-label">' + esc(label) + '</div>' +
       '<div class="k-value">' + value + '</div>' +
       '<div class="k-sub ' + (subCls || '') + '">' + esc(sub) + '</div></div>';
