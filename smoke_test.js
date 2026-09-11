@@ -245,6 +245,52 @@ try {
   ok('mock image set has selected style', afterMock[0].style === 'scene');
 } catch (e) { ok('mock image set saved locally', false); ok('mock image set has selected style', false); }
 
+/* ---------- AI 生图独立板块 ----------
+ * 生图从「Listing 页的一个按钮 + 弹窗」提升成独立板块。
+ * 这里锁住两件事：页面本身可用，以及生成动作只有一处（不再有第二套弹窗表单）。
+ */
+try {
+  ok('存在 imageGen 视图', !!V.imageGen && typeof V.imageGen.render === 'function');
+  ok('生图已从 Listing 页拆出（不再有第二套弹窗表单）',
+     typeof V.listing.openMockImageModal === 'undefined' &&
+     typeof V.listing.makeMockImages === 'undefined');
+
+  const gh = V.imageGen.render();
+  ok('生图页含商品主体输入', /id="igSubject"/.test(gh));
+  ok('生图页含四套风格预设', (gh.match(/name="igStyle"/g) || []).length === 4);
+  ok('生图页含生成套数', /id="igCount"/.test(gh));
+  ok('生图页含"从商品带入"', /id="igFromProduct"/.test(gh));
+  ok('生图页标明是前端 Mock', /不调用大模型/.test(gh));
+  ok('生图页指向图片库', /imageLibrary/.test(gh));
+
+  // 从 Listing 带入
+  V.imageGen.prefill({ subject: '带入测试主体', points: '卖点A；卖点B', style: 'detail' });
+  const gh2 = V.imageGen.render();
+  ok('prefill 带入主体', /带入测试主体/.test(gh2));
+  ok('prefill 带入卖点', /卖点A；卖点B/.test(gh2));
+  ok('prefill 带入风格', /value="detail" checked/.test(gh2));
+
+  // 组装逻辑（纯函数）：按当前设置出对应张数、初始为待筛选
+  const built = V.imageGen.buildSet();
+  ok('buildSet 用当前风格', built.style === 'detail' && built.styleLabel === '细节特写');
+  ok('buildSet 按套数出图', built.images.length === built.count && built.images.length === 4);
+  ok('buildSet 初始为待筛选', built.gallery === 'unclassified' && built.status === 'unclassified');
+  const beforeGen = S.listMockImageSets().length;
+  S.saveMockImageSet(built);
+  ok('生成结果进入图库待筛选',
+     S.listMockImageSets().length === beforeGen + 1 && S.listMockImageSets()[0].id === built.id);
+
+  // DOM 接线：点「生成商品图」后按钮必须进入生成中（证明 handler 挂上了且校验通过）
+  window.App.renderNav();
+  ok('导航含「AI 生图」板块', /AI 生图/.test(window.document.getElementById('nav').innerHTML));
+  window.App.go('imageGen');
+  window.document.getElementById('igSubject').value = '端到端生图主体';
+  const gbtn = window.document.getElementById('igGen');
+  gbtn.click();
+  ok('点生成后按钮进入生成中', gbtn.disabled === true && /生成中/.test(gbtn.textContent));
+  window.App.stopTimer();
+} catch (e) { ok('AI 生图板块', false); console.log('  -> ' + e.message + '\n' + e.stack); }
+
   ok('genListing amazon title non-empty', r && r.listing.title.length > 0);
   ok('genListing amazon 5 bullets', r && Array.isArray(r.listing.bullets) && r.listing.bullets.length === 5);
   ok('genListing amazon cnToEn applied',

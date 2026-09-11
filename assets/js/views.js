@@ -176,12 +176,43 @@
     var cls = g === 'hot' ? 'tag-red' : g === 'normal' ? 'tag-blue' : 'tag-gray';
     return '<span class="tag ' + cls + '">' + esc(galleryLabel(g)) + '</span>';
   }
+  /* 单批 Mock 结果卡片。「AI 生图」页和「图片库」页共用同一个渲染 ——
+   * 两个地方各自写一份的话，改了一处忘了另一处就会出现两种卡片样式。 */
+  function mockSetCard(set) {
+    var g = set.gallery || 'unclassified';
+    return '<div class="mock-set card">' +
+      '<div class="row-between"><div><b>' + esc(set.styleLabel) + '</b>' +
+        '<div class="cell-sub">' + esc(set.subject) + ' · ' + set.count + ' 套 · ' + S.fmtTime(set.createdAt) + '</div></div>' +
+        galleryTag(g) + '</div>' +
+      '<div class="mock-image-row">' + (set.images || []).map(function (im) {
+        return '<div class="mock-image" style="background:' + im.tone + '"><span>' + U.icon('image', 28) + '</span><small>Mock ' + im.index + '</small></div>';
+      }).join('') + '</div>' +
+      '<div class="image-actions">' +
+        '<button class="btn btn-sm btn-primary" data-mock-action="hot" data-mock-id="' + esc(set.id) + '">' + U.icon('bolt', 14) + ' 爆款</button>' +
+        '<button class="btn btn-sm" data-mock-action="normal" data-mock-id="' + esc(set.id) + '">普通</button>' +
+        '<button class="btn btn-sm" data-mock-action="unclassified" data-mock-id="' + esc(set.id) + '">待筛选</button>' +
+      '</div>' +
+      '<div class="hint">模拟图片占位图：接入真实 API 后，这里会替换为方舟转存图片。</div></div>';
+  }
+
   function mockGallery(sets) {
-    if (!sets.length) return '<div class="card"><div class="empty"><div class="e-ic">' + U.icon('image', 34) + '</div><div>还没有 Mock 生图结果，请从 Listing 页面点击「根据 Listing 生成商品图」</div></div></div>';
-      return '<div class="mock-gallery"><div class="card-head"><h3>Mock 生图结果</h3><span class="desc">仅前端演示数据，尚未调用真实生图接口</span></div>' + sets.map(function (set) {
-      var g = set.gallery || 'unclassified';
-      return '<div class="mock-set card"><div class="row-between"><div><b>' + esc(set.styleLabel) + '</b><div class="cell-sub">' + esc(set.subject) + ' · ' + set.count + ' 套 · ' + S.fmtTime(set.createdAt) + '</div></div>' + galleryTag(g) + '</div><div class="mock-image-row">' + (set.images || []).map(function (im) { return '<div class="mock-image" style="background:' + im.tone + '"><span>' + U.icon('image', 28) + '</span><small>Mock ' + im.index + '</small></div>'; }).join('') + '</div><div class="image-actions"><button class="btn btn-sm btn-primary" data-mock-action="hot" data-mock-id="' + esc(set.id) + '">' + U.icon('bolt', 14) + ' 爆款</button><button class="btn btn-sm" data-mock-action="normal" data-mock-id="' + esc(set.id) + '">普通</button><button class="btn btn-sm" data-mock-action="unclassified" data-mock-id="' + esc(set.id) + '">待筛选</button></div><div class="hint">模拟图片占位图：接入真实 API 后，这里会替换为方舟转存图片。</div></div>';
-    }).join('') + '</div>';
+    if (!sets.length) {
+      return '<div class="card">' + empty('还没有 Mock 生图结果，去「AI 生图」页生成一批', 'image') + '</div>';
+    }
+    return '<div class="mock-gallery"><div class="card-head"><h3>Mock 生图结果</h3>' +
+      '<span class="desc">仅前端演示数据，尚未调用真实生图接口</span></div>' +
+      sets.map(mockSetCard).join('') + '</div>';
+  }
+
+  /* 人工筛选一批 Mock 结果。生图页和图片库页都要用，抽出来避免两套逻辑走偏。 */
+  function markMockSet(id, gallery) {
+    if (gallery === 'hot') {
+      var guidance = prompt('填写这组爆款图的视觉锚点（可选）', '柔和暖光; 构图留白; 产品主体突出');
+      if (guidance === null) return;   // 取消 → 不改
+    }
+    S.markMockImageSet(id, gallery);
+    U.toast('ok', 'Mock 筛选已保存', galleryLabel(gallery));
+    App.refresh();
   }
 
   function imageLibraryCard(item) {
@@ -198,6 +229,170 @@
       (item.gallery !== 'unclassified' ? '<button class="btn btn-sm" data-image-action="unclassified" data-image-id="' + item.id + '">撤回待筛选</button>' : '') +
       '</div></div></div>';
   }
+  /* ==========================================================
+   * 2. AI 生图（独立板块）
+   *
+   * 生图原来藏在 Listing 页的一个按钮 + 弹窗里，路径太深：
+   * 想单独给某个商品出图，必须先编一份 Listing 才能走到那个按钮。
+   * 现在它是独立板块 —— 可以直接填主体出图，也可以从商品 / Listing 带入。
+   *
+   * 当前是**纯前端 Mock**：不发任何网络请求。先把交互流程（选风格 → 定套数 →
+   * 出图 → 进图库 → 人工筛选 → 风格反哺）跑通，再接真实接口 ——
+   * 否则"接口调不通"和"流程设计不对"两件事会混在一起，排查时互相干扰。
+   * ========================================================== */
+  var IG_STYLES = [
+    { k: 'amazon_main', n: '亚马逊白底主图', d: '纯白背景 · 棚拍 · 居中构图' },
+    { k: 'scene', n: '场景氛围图', d: '真实场景 · 暖色 · 商业摄影' },
+    { k: 'detail', n: '细节特写', d: '材质纹理 · 微距 · 工艺细节' },
+    { k: 'lifestyle', n: '人物使用场景', d: '人物出镜 · 生活方式 · 3:4' }
+  ];
+
+  /* 生图表单状态。变量名必须唯一 —— 同一个 IIFE 里 var 重名会静默覆盖，
+   * 之前 lf 踩过一次（Listing 表单被日志筛选状态覆盖），这里单独用 igf。 */
+  var igf = { subject: '', points: '', style: 'amazon_main', count: 4, fromProduct: '', lastSetId: '' };
+
+  function igStyleLabel(k) {
+    var hit = IG_STYLES.filter(function (s) { return s.k === k; })[0];
+    return hit ? hit.n : k;
+  }
+
+  var imageGen = {
+    title: 'AI 生图', desc: '按风格预设生成商品图，结果进入图片库待筛选',
+    render: function () {
+      var d = S.get();
+      var sets = S.listMockImageSets();
+      var last = sets.filter(function (s) { return s.id === igf.lastSetId; })[0] || sets[0];
+      var prodOpts = d.products.map(function (p) {
+        return '<option value="' + p.id + '"' + (igf.fromProduct === p.id ? ' selected' : '') + '>' +
+          esc(p.sku) + ' · ' + esc(p.title.slice(0, 22)) + '</option>';
+      }).join('');
+
+      var html = '<div class="card mb16"><div class="card-head"><h3>生成设置</h3>' +
+        '<span class="desc">当前为前端 Mock：不调用大模型 / 方舟 / 任何网络接口</span></div>' +
+        '<div class="card-body">' +
+          '<div class="field-row">' +
+            '<div class="field"><label>从已有商品带入主体（可选）</label>' +
+              '<select class="select" id="igFromProduct"><option value="">不带入</option>' + prodOpts + '</select></div>' +
+            '<div class="field"><label>生成套数</label><select class="select" id="igCount">' +
+              [[1, '1 套'], [4, '4 套（推荐）'], [8, '8 套']].map(function (x) {
+                return '<option value="' + x[0] + '"' + (igf.count === x[0] ? ' selected' : '') + '>' + x[1] + '</option>';
+              }).join('') + '</select></div>' +
+          '</div>' +
+          '<div class="field"><label>商品主体 <span class="req">*</span></label>' +
+            '<input class="input" id="igSubject" value="' + esc(igf.subject) + '" placeholder="如：无线降噪蓝牙耳机，黑色，主体居中" /></div>' +
+          '<div class="field"><label>要在画面里体现的卖点（可选，分号或换行分隔）</label>' +
+            '<textarea class="input" id="igPoints" rows="2" placeholder="35dB 主动降噪；30 小时续航；IPX5 防水">' + esc(igf.points) + '</textarea></div>' +
+          '<div class="field"><label>风格预设 <span class="cell-sub">只能从这里选，保证同店出图风格一致</span></label>' +
+            '<div class="mock-style-grid">' + IG_STYLES.map(function (s) {
+              return '<label class="mock-style"><input type="radio" name="igStyle" value="' + s.k + '"' +
+                (igf.style === s.k ? ' checked' : '') + ' /><span><b>' + s.n + '</b><small>' + s.d + '</small></span></label>';
+            }).join('') + '</div></div>' +
+          '<div class="mock-lock"><b>' + U.icon('check', 14) + ' 风格已锁定</b>' +
+            '<span>Mock 会保持所选风格；接真实接口后用的是同一套 style preset（后端 image_gen.DEFAULT_STYLES）</span></div>' +
+          '<div class="row-between mt16">' +
+            '<div class="hint" style="margin:0">生成结果会进入图片库的「待筛选」；人工标成爆款后，它的视觉锚点会反哺后续生图。</div>' +
+            '<div style="display:flex;gap:8px;flex-shrink:0">' +
+              '<button class="btn" id="igClear">清空</button>' +
+              '<button class="btn btn-primary" id="igGen">' + U.icon('sparkles', 15) + ' 生成商品图</button>' +
+            '</div>' +
+          '</div>' +
+        '</div></div>';
+
+      html += '<div class="card mb16"><div class="card-head"><h3>最近一批生成结果</h3>' +
+        (last ? '<span class="desc">' + esc(last.subject) + ' · ' + last.count + ' 套 · ' + S.fmtTime(last.createdAt) + '</span>' +
+          '<div style="margin-left:auto"><button class="btn btn-sm" onclick="App.go(\'imageLibrary\')">去图片库管理全部</button></div>'
+          : '') +
+        '</div><div class="card-body">' +
+        (last ? mockSetCard(last)
+              : empty('还没有生成结果，填好上面的设置后点「生成商品图」', 'sparkles')) +
+        '</div></div>';
+
+      html += '<div class="card"><div class="card-head"><h3>从 Mock 到真实生图</h3></div><div class="card-body doc">' +
+        '<p>这一块现在是<b>纯前端 Mock</b>：不调用大模型、不调用方舟、不发任何网络请求，生成的是占位图卡片。' +
+        '目的是先把<b>交互流程</b>跑通，再接真实接口。</p>' +
+        '<h4>接真实接口时要动的地方</h4>' +
+        '<ul>' +
+          '<li>后端链路已经完整：<code>image_gen.build_image_request()</code> → <code>generate()</code> → ' +
+            '<code>image_store.store_generated()</code> → <code>image_library.add_saved_batch()</code>，' +
+            '只差一个 <code>POST /api/images/generate</code> 端点。</li>' +
+          '<li>前端把本页的 <code>imageGen.generate()</code> 换成一次 API 调用即可 —— ' +
+            '风格选择、套数、待筛选、人工分类这些交互都不用改。</li>' +
+          '<li>方舟返回的图片 URL 只有 24 小时有效期，所以必须由后端先转存到本地再入库，' +
+            '前端只引用 <code>/media/</code> 下的本地文件。</li>' +
+        '</ul>' +
+        '<h4>为什么风格只能选、不能自己写</h4>' +
+        '<p>模型每次自由发挥，同一个 SKU 两次出图风格可能完全不同，放到店铺里就是一盘散沙。' +
+        '预设把「画风、背景、光线、镜头」这些主观但必须稳定的部分钉死，只让模型负责填主体与卖点。</p>' +
+        '</div></div>';
+      return html;
+    },
+    mount: function () {
+      var self = this;
+      var fp = $('#igFromProduct');
+      if (fp) fp.onchange = function () {
+        igf.fromProduct = fp.value;
+        var p = S.get().products.filter(function (x) { return x.id === fp.value; })[0];
+        if (p) { igf.subject = p.title; App.refresh(); }
+      };
+      var cc = $('#igCount');
+      if (cc) cc.onchange = function () { igf.count = parseInt(cc.value, 10) || 4; };
+      $$('input[name="igStyle"]').forEach(function (r) {
+        r.onchange = function () { if (r.checked) igf.style = r.value; };
+      });
+      var cl = $('#igClear');
+      if (cl) cl.onclick = function () { igf.subject = ''; igf.points = ''; igf.fromProduct = ''; App.refresh(); };
+      var gg = $('#igGen');
+      if (gg) gg.onclick = function () { self.generate(gg); };
+      $$('[data-mock-action]').forEach(function (btn) {
+        btn.onclick = function () { markMockSet(btn.dataset.mockId, btn.dataset.mockAction); };
+      });
+    },
+
+    /** 从 Listing 页带入：标题当主体、前几条五点当卖点。 */
+    prefill: function (opts) {
+      opts = opts || {};
+      if (opts.subject) igf.subject = String(opts.subject).slice(0, 120);
+      if (opts.points) igf.points = String(opts.points).slice(0, 300);
+      if (opts.style) igf.style = opts.style;
+    },
+
+    /**
+     * 按当前设置组装一批结果（纯函数，不碰 DOM、不落盘）。
+     * 抽出来是为了：1) 测试能同步断言"点生成会出什么"；2) 将来换成真实接口时，
+     * 只要把这里替换成"把后端返回的图片地址填进 images"，其余交互一行都不用动。
+     */
+    buildSet: function () {
+      var set = {
+        id: S.uid('mockimg'), status: 'unclassified', gallery: 'unclassified',
+        style: igf.style, styleLabel: igStyleLabel(igf.style),
+        subject: igf.subject, points: igf.points, count: igf.count, createdAt: S.now(),
+        images: []
+      };
+      for (var i = 0; i < igf.count; i++) {
+        set.images.push({ id: S.uid('mock'), index: i + 1, tone: ['#f5f7fb', '#e9eef8', '#fcecef', '#eef8f3'][i % 4] });
+      }
+      return set;
+    },
+
+    generate: function (btn) {
+      var subject = ($('#igSubject') ? $('#igSubject').value : igf.subject || '').trim();
+      var points = $('#igPoints') ? $('#igPoints').value : (igf.points || '');
+      igf.subject = subject; igf.points = points;
+      if (!subject) { U.toast('warn', '请填写商品主体', '商品主体是生图的唯一必需输入'); return; }
+
+      if (btn) { btn.disabled = true; btn.textContent = '生成中...'; }
+      setTimeout(function () {
+        var set = imageGen.buildSet();
+        S.saveMockImageSet(set);
+        igf.lastSetId = set.id;
+        S.addLog('info', 'image', 'Mock 生图：' + subject.slice(0, 20) +
+          '（' + set.styleLabel + '，' + set.count + ' 套）');
+        U.toast('ok', 'Mock 生图完成', set.count + ' 套已进入图片库待筛选');
+        App.refresh();
+      }, 700);
+    }
+  };
+
   var imageLibrary = {
     title: '图片库', desc: '查看生图结果，人工筛选并让爆款风格反哺后续生图',
     render: function () {
@@ -236,15 +431,8 @@
         imageLibraryState.stats = r[0]; imageLibraryState.items = r[1].items || []; imageLibraryState.loading = false; imageLibraryState.loaded = true; App.refresh();
       }).catch(function (e) { imageLibraryState.loading = false; imageLibraryState.error = e.message || '请求图片库失败'; App.refresh(); });
     },
-    markMock: function (id, gallery) {
-      if (gallery === 'hot') {
-        var guidance = prompt('填写这组爆款图的视觉锚点（可选）', '柔和暖光; 构图留白; 产品主体突出');
-        if (guidance === null) return;
-      }
-      S.markMockImageSet(id, gallery);
-      U.toast('ok', 'Mock 筛选已保存', galleryLabel(gallery));
-      App.refresh();
-    },
+    // 与「AI 生图」页共用同一套筛选逻辑（见 markMockSet），避免两处各写一份走偏
+    markMock: markMockSet,
     mark: function (id, gallery) {
       var self = this;
       var guidance = gallery === 'hot' ? prompt('填写这张爆款图的视觉锚点（可选）', '柔和暖光; 构图留白; 产品主体突出') : '';
@@ -672,7 +860,17 @@
 
       var im = $('#lgImageMock');
       if (im) im.onclick = function () {
-        self.openMockImageModal(self.readForm());
+        // 生图已经独立成板块，这里不再弹窗 —— 直接带着 Listing 跳到「AI 生图」页。
+        // 保留这个入口是为了"编完 Listing 顺手出图"的顺手路径，
+        // 但生成动作只有一处（生图页），避免两个地方各维护一套表单。
+        var r = self.readForm();
+        if (!r || !r.listing) { U.toast('warn', '请先生成 Listing', '商品图需要基于 Listing 生成'); return; }
+        imageGen.prefill({
+          subject: r.listing.title,
+          points: (r.listing.bullets || []).slice(0, 3).join('；')
+        });
+        App.go('imageGen');
+        U.toast('info', '已带入「AI 生图」', '选好风格与套数后点「生成商品图」');
       };
       var rc = $('#lgRecheck');
       if (rc) rc.onclick = function () {
@@ -723,28 +921,10 @@
       };
     },
 
-    openMockImageModal: function (r) {
-      if (!r || !r.listing) { U.toast('warn', '请先生成 Listing', '商品图需要基于 Listing 生成'); return; }
-      var styles = [{ k: 'amazon_main', n: '亚马逊白底主图', d: '纯白背景 · 棚拍 · 居中构图' }, { k: 'scene', n: '场景氛围图', d: '真实场景 · 暖色 · 商业摄影' }, { k: 'detail', n: '细节特写', d: '材质纹理 · 微距 · 工艺细节' }, { k: 'lifestyle', n: '人物使用场景', d: '人物出镜 · 生活方式 · 3:4' }];
-      var body = '<div class="mock-image-modal"><div class="hint">当前为前端 Mock，不会调用大模型、方舟或任何网络接口。生成完成后会直接进入图片库的「待筛选」。</div>' +
-        '<div class="field"><label>商品主体</label><input class="input" id="mockImageSubject" value="' + esc(r.listing.title) + '" /></div>' +
-        '<div class="field"><label>生成风格</label><div class="mock-style-grid">' + styles.map(function (s) { return '<label class="mock-style"><input type="radio" name="mockStyle" value="' + s.k + '"' + (s.k === 'amazon_main' ? ' checked' : '') + ' /><span><b>' + s.n + '</b><small>' + s.d + '</small></span></label>'; }).join('') + '</div></div>' +
-        '<div class="field"><label>生成套数</label><select class="select" id="mockImageCount"><option value="4">4 套（推荐）</option><option value="1">1 套</option><option value="8">8 套</option></select></div>' +
-        '<div class="mock-lock"><b>' + U.icon('check', 14) + ' 风格已锁定</b><span>Mock 会保持所选风格，真实接入后使用相同 style preset</span></div></div>';
-      U.modal({ title: '根据 Listing 生成商品图', body: body, width: 680, okText: '开始 Mock 生图', onOk: function (w, btn) {
-        var subject = $('#mockImageSubject', w).value.trim(), style = w.querySelector('input[name="mockStyle"]:checked').value, count = parseInt($('#mockImageCount', w).value, 10);
-        if (!subject) { U.toast('warn', '请填写商品主体'); return false; }
-        btn.disabled = true; btn.textContent = '生成中...';
-        setTimeout(function () { listing.makeMockImages({ subject: subject, style: style, count: count, listing: r.listing }); }, 700);
-        return true;
-      }});
-    },
-    makeMockImages: function (args) {
-      var names = { amazon_main: '亚马逊白底主图', scene: '场景氛围图', detail: '细节特写', lifestyle: '人物使用场景' };
-      var set = { id: S.uid('mockimg'), status: 'unclassified', gallery: 'unclassified', style: args.style, styleLabel: names[args.style], subject: args.subject, count: args.count, createdAt: S.now(), listingTitle: args.listing.title, listing: args.listing, images: [] };
-      for (var i = 0; i < args.count; i++) set.images.push({ id: S.uid('mock'), index: i + 1, tone: ['#f5f7fb', '#e9eef8', '#fcecef', '#eef8f3'][i % 4] });
-      S.saveMockImageSet(set); U.toast('ok', 'Mock 生图完成', args.count + ' 套已进入图片库待筛选'); App.go('imageLibrary');
-    },
+    /* 生图的表单与生成逻辑已经整体搬到「AI 生图」板块（见 imageGen）。
+     * 这里不再保留 openMockImageModal / makeMockImages ——
+     * 生成动作只留一处，否则改风格预设、改套数选项要改两个地方，
+     * 迟早出现"弹窗里能选 8 套、生图页只能选 4 套"这种不一致。 */
     doExport: function (r) {
       var schema = S.schemaForListing(lf.category);
       var payload = r.platform === 'amazon'
@@ -1588,8 +1768,9 @@
 
   global.Views = {
     dashboard: dashboard, products: products, listing: listing,
+    imageGen: imageGen, imageLibrary: imageLibrary,
     tasks: tasks, alerts: alerts,
     logs: logs, credentials: credentials, shops: shopsView, settings: settings,
-    deploy: deploy, imageLibrary: imageLibrary
+    deploy: deploy
   };
 })(window);

@@ -341,17 +341,28 @@ https://629ff8cd6f86472a8e2792ea8a8a3ee9.sg2.agentos-app.run
 
 > 公网实例当前是空图库，图片文件与 SQLite 数据不会从本地开发环境自动同步过去。要把真实生成图放进去，需要在同一公网后端环境运行「生图 → 转存 → 注册图库」流程；当前公网 API 已先验证 `/health` 和 `/api/images/stats` 均返回 200。
 
-### 前端 Mock 生图入口
+### AI 生图（独立板块）
 
-目前可以先不调用大模型和方舟接口，直接在前端验证完整交互：
+生图是一个**独立板块**（左侧「运营 → AI 生图」），不需要先编 Listing 才能出图：
 
-1. 进入「AI 生成 Listing」
-2. 填入商品信息并点击「生成 Listing」
-3. 在生成结果操作区点击「根据 Listing 生成商品图」
-4. 选择风格和数量，点击「开始 Mock 生图」
-5. 结果会保存到浏览器 localStorage，并显示在「图片库」的 Mock 待筛选区域
+1. 进入「AI 生图」
+2. 填商品主体（可从已有商品下拉带入），选风格预设与生成套数
+3. 点「生成商品图」
+4. 结果保存到浏览器 localStorage，并出现在「图片库」的 Mock 待筛选区域
+5. 在生图页或图片库页把结果标成**爆款 / 普通 / 待筛选**
 
-Mock 模式不会发起任何网络请求，使用的是占位图卡片；将来接真实接口时只替换 `makeMockImages()`，保留风格、数量、待筛选和人工分类交互。
+「AI 生成 Listing」页的「根据 Listing 生成商品图」按钮保留，但它的动作是
+**带着 Listing 跳到生图页**（标题当主体、前三条五点当卖点）——
+生成动作只有一处，避免两个地方各维护一套表单。
+
+当前是**纯前端 Mock**：不调用大模型、不调用方舟、不发任何网络请求，出的是占位图卡片。
+这样做是为了先把交互流程（选风格 → 定套数 → 出图 → 进图库 → 人工筛选 → 风格反哺）
+跑通，再接真实接口 —— 否则"接口调不通"和"流程设计不对"会混在一起互相干扰。
+
+接真实接口时只替换 `imageGen.generate()`（后端链路
+`image_gen.build_image_request() → generate() → image_store.store_generated() →
+image_library.add_saved_batch()` 已完整，只差一个 `POST /api/images/generate`），
+风格选择、套数、待筛选、人工分类这些交互都不用改。
 
 自检脚本加了 `--save`，一次跑通「真实生图 → 下载落盘」：
 
@@ -511,7 +522,7 @@ python main.py images stats --shop shop_uk
 本仓库**无需构建**：前端是纯静态文件，双击 `index.html` 即可运行。
 
 ```bash
-# 1) 前端冒烟测试（验证 10 个页面渲染 + Listing 全流程 + 多店铺隔离）
+# 1) 前端冒烟测试（验证 11 个页面渲染 + Listing 全流程 + AI 生图 + 多店铺隔离）
 npm install        # 安装 jsdom 开发依赖
 npm test          # 等价于 node smoke_test.js，应输出 PASS: 38  FAIL: 0
 
