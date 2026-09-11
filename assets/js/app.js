@@ -24,6 +24,7 @@
     },
     {
       group: '系统', items: [
+        { key: 'shops', name: '店铺管理', icon: 'store' },
         { key: 'credentials', name: '平台与凭证', icon: 'key' },
         { key: 'settings', name: '系统设置', icon: 'sliders' },
         { key: 'deploy', name: '部署指南', icon: 'book' }
@@ -108,10 +109,39 @@
       content.innerHTML = '<div class="view">' + view.render() + '</div>';
       if (view.mount) view.mount();
       this.renderNav();
+      this.renderShopSwitcher();   // 顶栏店铺名必须和当前数据保持一致
       window.scrollTo(0, 0);
     },
 
     refresh: function () { this.go(current); },
+
+    /* ---------- 多店铺 ---------- */
+    renderShopSwitcher: function () {
+      var sel = document.getElementById('shopSelect');
+      if (!sel || !S.shops) return;
+      var list = S.shops(), cur = S.activeShopId();
+      sel.innerHTML = list.map(function (s) {
+        return '<option value="' + U.esc(s.id) + '"' + (s.id === cur ? ' selected' : '') + '>' + U.esc(s.name) + '</option>';
+      }).join('');
+      sel.onchange = function () { App.switchShop(sel.value); };
+      var chip = document.getElementById('shopCount');
+      if (chip) chip.textContent = list.length + ' 家';
+    },
+
+    /**
+     * 切换店铺。切换后必须重跑 applyMode / 定时器 ——
+     * 每家店的演示模式、监控节奏、是否自动执行都是**各自独立**的配置，
+     * 不重跑的话会继续沿用上一家店的节奏，表现是"切了店但定时任务还是按老店跑"。
+     */
+    switchShop: function (id) {
+      var r = S.switchShop(id);
+      if (!r.ok) { U.toast('err', '切换失败', r.msg); this.renderShopSwitcher(); return; }
+      if (!r.changed) return;
+      U.toast('ok', '已切换到「' + r.shop.name + '」', '商品 / 任务 / 告警 / 日志 / 凭证均已按店隔离');
+      this.applyMode();
+      this.restartTimer();
+      this.go(current);
+    },
 
     bindShell: function () {
       var self = this;

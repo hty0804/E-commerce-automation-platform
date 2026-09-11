@@ -160,7 +160,11 @@
     return String((s.imageLibrary && s.imageLibrary.apiBaseUrl) || '').replace(/\/$/, '');
   }
   function imageApi(path, opts) {
-    return fetch(imageApiBase() + path, opts || {}).then(function (r) {
+    // 带上当前店铺：图片库与爆款风格反哺都按店隔离，
+    // 不传 shop_id 会被后端当成默认店铺，看到/改到的就不是这家店的数据。
+    var url = imageApiBase() + path;
+    url += (url.indexOf('?') >= 0 ? '&' : '?') + 'shop_id=' + encodeURIComponent(S.activeShopId());
+    return fetch(url, opts || {}).then(function (r) {
       return r.json().then(function (data) {
         if (!r.ok || !data.ok) throw new Error(data.error || ('HTTP ' + r.status));
         return data;
@@ -1172,7 +1176,147 @@
   };
 
   /* ==========================================================
-   * 8. 系统设置
+   * 8. 店铺管理（多店铺 / 防关联多账号）
+   * 数据层是"一家店一份独立的 localStorage 库"，所以这里的操作
+   * 只需要维护注册表 + 切换当前店铺，不用逐条记录去过滤 shop_id。
+   * ========================================================== */
+  var shopsView = {
+    title: '店铺管理', desc: '多店铺隔离：每家店独立的数据、凭证与告警渠道',
+    render: function () {
+      var list = S.shops(), cur = S.activeShopId();
+      var cards = list.map(function (s) {
+        var sum = S.shopSummary(s.id);
+        var isCur = s.id === cur;
+        return '<div class="shop-card' + (isCur ? ' active' : '') + '">' +
+          '<div class="row-between"><b>' + esc(s.name) + '</b>' +
+            (isCur ? '<span class="tag tag-green">当前店铺</span>' : '') + '</div>' +
+          '<div class="cell-sub">' + (s.platform === 'pdd' ? '拼多多' : '亚马逊') +
+            (s.note ? ' · ' + esc(s.note) : '') + '</div>' +
+          '<div class="shop-metrics">' +
+            '<span><b>' + sum.products + '</b> SKU</span>' +
+            '<span><b>' + sum.tasks + '</b> 监控任务</span>' +
+            '<span><b>' + sum.unhandled + '</b> 未处理告警</span>' +
+          '</div>' +
+          '<div class="cell-sub">创建于 ' + S.fmtTime(s.createdAt) + ' · SHOP_ID: <code>' + esc(s.id) + '</code></div>' +
+          '<div class="image-actions">' +
+            (isCur ? '' : '<button class="btn btn-sm btn-primary" data-shop-switch="' + esc(s.id) + '">切换到此店</button>') +
+            '<button class="btn btn-sm" data-shop-rename="' + esc(s.id) + '">重命名</button>' +
+            (list.length > 1 ? '<button class="btn btn-sm btn-danger" data-shop-del="' + esc(s.id) + '">删除</button>' : '') +
+          '</div></div>';
+      }).join('');
+
+      var html = '<div class="card mb16"><div class="card-head"><h3>店铺列表</h3>' +
+        '<span class="desc">共 ' + list.length + ' 家 · 顶栏可直接切换</span>' +
+        '<div style="margin-left:auto"><button class="btn btn-primary" id="shopAdd">' + U.icon('plus', 15) + ' 新建店铺</button></div>' +
+        '</div><div class="card-body"><div class="shop-grid">' + cards + '</div></div></div>';
+
+      html += '<div class="card"><div class="card-head"><h3>隔离模型与后端对接</h3></div><div class="card-body doc">' +
+        '<p><b>为什么是"分库"而不是"每条记录加 shop_id"。</b>' +
+        '每条记录加字段意味着每次查询都要记得带店铺过滤，漏掉任何一处就是串店' +
+        '（把 A 店的商品显示在 B 店），而且这种错不报错、只在数据上体现，属于最难查的一类问题。' +
+        '分库之后，内存里的那份数据本身就是"当前店铺的全部数据"，' +
+        '商品 / 任务 / 告警 / 日志 / 指标 / 凭证 / 告警渠道 / 图片库全部天然隔离。</p>' +
+        '<h4>存储布局</h4>' +
+        '<div class="code-block">ecom_sop_shops                  <span class="c"># 店铺注册表（全局唯一）</span>\n' +
+        'ecom_sop_active_shop            <span class="c"># 当前店铺 id</span>\n' +
+        'ecom_sop_admin_v1::&lt;shop_id&gt;   <span class="c"># 某家店的完整数据</span></div>' +
+        '<h4>后端按店隔离</h4>' +
+        '<p>在「平台与凭证」填好并点<b>下载 .env</b>，导出文件里会带上 <code>SHOP_ID</code>。' +
+        '后端用它读写指标历史库（<code>metric_history.shop_id</code>）、图片库（<code>image_assets.shop_id</code>）' +
+        '以及按店分文件的状态文件 <code>state_&lt;SHOP_ID&gt;.json</code>。' +
+        '同一台机器上跑多家店时，给每个 crontab 行设不同的 <code>SHOP_ID</code> 即可，互不可见。</p>' +
+        '<div class="code-block"><span class="c"># 两家店各自一条 crontab，数据完全隔离</span>\n' +
+        '0 * * * * cd /path/to/python_backend &amp;&amp; <span class="k">SHOP_ID</span>=shop_us <span class="k">python3</span> main.py monitor\n' +
+        '0 * * * * cd /path/to/python_backend &amp;&amp; <span class="k">SHOP_ID</span>=shop_uk <span class="k">python3</span> main.py monitor</div>' +
+        '<h4>注意</h4>' +
+        '<ul>' +
+          '<li>删除店铺会连带删掉它那一整库数据（商品 / 任务 / 告警 / 日志 / 凭证），不可恢复，操作前会二次确认。</li>' +
+          '<li>至少保留一家店铺，不允许删到 0 家。</li>' +
+          '<li>新建店铺默认是<b>空库</b>：不塞假商品、假告警 —— 真实店铺应该从干净状态开始建。</li>' +
+        '</ul>' +
+        '</div></div>';
+      return html;
+    },
+    mount: function () {
+      var add = $('#shopAdd');
+      if (add) add.onclick = function () { shopsView.form(); };
+
+      $$('[data-shop-switch]').forEach(function (b) {
+        b.onclick = function () { App.switchShop(b.dataset.shopSwitch); };
+      });
+      $$('[data-shop-rename]').forEach(function (b) {
+        b.onclick = function () { shopsView.rename(b.dataset.shopRename); };
+      });
+      $$('[data-shop-del]').forEach(function (b) {
+        b.onclick = function () {
+          var s = S.shops().filter(function (x) { return x.id === b.dataset.shopDel; })[0];
+          if (!s) return;
+          U.confirm('删除店铺「' + s.name + '」',
+            '该店铺的商品、监控任务、告警记录、运行日志与凭证都会一并删除，且不可恢复。确定继续？',
+            function () {
+              var r = S.removeShop(s.id);
+              U.toast(r.ok ? 'ok' : 'err', r.ok ? '店铺已删除' : '删除失败', r.ok ? s.name : r.msg);
+              App.renderShopSwitcher();
+              App.refresh();
+            }, '删除');
+        };
+      });
+    },
+    form: function () {
+      var body = '<div class="field"><label>店铺名称 <span class="req">*</span></label>' +
+          '<input class="input" id="shopName" placeholder="如：US 主店 / UK 分店" /></div>' +
+        '<div class="field-row">' +
+          '<div class="field"><label>主营平台</label><select class="select" id="shopPlatform">' +
+            '<option value="amazon">亚马逊</option><option value="pdd">拼多多</option></select></div>' +
+          '<div class="field"><label>备注（可选）</label>' +
+            '<input class="input" id="shopNote" placeholder="如：美国站 · 3C 类目" /></div>' +
+        '</div>' +
+        '<label class="check-line"><input type="checkbox" id="shopSeed" /> 创建后填入一套演示数据（只想先看效果时勾选）</label>' +
+        '<div class="hint">默认创建<b>空店铺</b>：不塞假商品、假告警。' +
+          '真实店铺建议保持空库 —— 演示数据和自己的商品混在一起时，' +
+          '最容易发生的是"误把演示商品当成自己的商品改了"。</div>';
+
+      U.modal({
+        title: '新建店铺', body: body, width: 580, okText: '创建',
+        onOk: function (w) {
+          var name = $('#shopName', w).value.trim();
+          if (!name) { U.toast('err', '请填写店铺名称'); return false; }
+          var r = S.createShop(name, {
+            platform: $('#shopPlatform', w).value,
+            note: $('#shopNote', w).value,
+            seed: $('#shopSeed', w).checked
+          });
+          if (!r.ok) { U.toast('err', '创建失败', r.msg); return false; }
+          U.toast('ok', '店铺已创建', name + '（可在顶栏切换过去）');
+          App.renderShopSwitcher();
+          App.refresh();
+        }
+      });
+    },
+    rename: function (id) {
+      var s = S.shops().filter(function (x) { return x.id === id; })[0];
+      if (!s) return;
+      U.modal({
+        title: '重命名店铺', width: 460, okText: '保存',
+        body: '<div class="field"><label>店铺名称 <span class="req">*</span></label>' +
+          '<input class="input" id="shopRename" value="' + esc(s.name) + '" /></div>' +
+          '<div class="hint">只改显示名，SHOP_ID（<code>' + esc(s.id) + '</code>）不变，' +
+          '所以后端已经落库的历史数据不会失联。</div>',
+        onOk: function (w) {
+          var name = $('#shopRename', w).value.trim();
+          if (!name) { U.toast('err', '请填写店铺名称'); return false; }
+          var r = S.renameShop(id, name);
+          if (!r.ok) { U.toast('err', '重命名失败', r.msg); return false; }
+          U.toast('ok', '已重命名', name);
+          App.renderShopSwitcher();
+          App.refresh();
+        }
+      });
+    }
+  };
+
+  /* ==========================================================
+   * 9. 系统设置
    * ========================================================== */
   var settings = {
     title: '系统设置', desc: '运行参数与数据管理',
@@ -1358,7 +1502,7 @@
   };
 
   /* ==========================================================
-   * 9. 部署指南
+   * 10. 部署指南
    * ========================================================== */
   var deploy = {
     title: '部署指南', desc: '接入真实 API 的实施步骤',
@@ -1445,6 +1589,7 @@
   global.Views = {
     dashboard: dashboard, products: products, listing: listing,
     tasks: tasks, alerts: alerts,
-    logs: logs, credentials: credentials, settings: settings, deploy: deploy, imageLibrary: imageLibrary
+    logs: logs, credentials: credentials, shops: shopsView, settings: settings,
+    deploy: deploy, imageLibrary: imageLibrary
   };
 })(window);

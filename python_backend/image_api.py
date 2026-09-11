@@ -3,14 +3,18 @@
 启动:
     python python_backend/image_api.py
 
-接口:
-    GET  /api/images?gallery=hot&style=scene&limit=100&offset=0
-    GET  /api/images/stats
-    GET  /api/images/feedback?style=scene
-    POST /api/images/{id}/mark  {"gallery":"hot", "style_guidance":"柔和暖光; 右侧留白"}
-    DELETE /api/images/{id}
+接口(所有接口都接受 ?shop_id=xxx,缺省用 config.SHOP_ID):
+    GET  /api/images?gallery=hot&style=scene&limit=100&offset=0&shop_id=shop_xxx
+    GET  /api/images/stats?shop_id=shop_xxx
+    GET  /api/images/feedback?style=scene&shop_id=shop_xxx
+    POST /api/images/{id}/mark?shop_id=shop_xxx  {"gallery":"hot", "style_guidance":"柔和暖光; 右侧留白"}
+    DELETE /api/images/{id}?shop_id=shop_xxx
     GET  /media/{file_name}
     GET  /health
+
+多店铺隔离:每个接口都会把 shop_id 透传给 image_library,后者在 SQL 里
+作为**第一道**过滤条件(不是可选条件),所以不存在"忘了带店铺就看全库"的情况。
+前端图片库页面会自动带上当前店铺的 id。
 
 这是轻量 stdlib 服务，不引入 Flask；前端若 API 不可用会显示明确离线态，
 不会把假数据伪装成真实图库。部署平台会注入 PORT，服务必须监听 0.0.0.0:$PORT。
@@ -31,6 +35,11 @@ import config
 import image_library
 
 log = logging.getLogger(__name__)
+
+
+def _shop_of(query: dict):
+    """从查询串取 shop_id;没给就返回 None,由 image_library 落到 config.SHOP_ID。"""
+    return (query.get("shop_id") or [None])[0] or None
 
 
 def _cors_headers(handler):
@@ -70,6 +79,23 @@ class ImageAPIHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         log.info("%s - %s", self.address_string(), fmt % args)
 
+    def handle_one_request(self):
+        """
+        请求结束后释放本线程缓存的 SQLite 连接。
+
+        为什么必须在这里关:ThreadingHTTPServer 是**每个请求起一个线程**,
+        而 image_library 把连接缓存在 threading.local() 里 —— 线程一结束,
+        那个连接就再也没人持有,只能等 GC 回收。表现是:
+          - 每个请求都新建一个 SQLite 连接,连接复用完全失效;
+          - 解释器退出时报一堆 ResourceWarning: unclosed database(CI 里能看到);
+          - 请求量大时可能耗尽文件描述符。
+        连接在请求内是复用的(一个请求里多次查询共用一条),请求结束就关掉。
+        """
+        try:
+            super().handle_one_request()
+        finally:
+            image_library.close()
+
     def do_OPTIONS(self):
         self.send_response(204)
         _cors_headers(self)
@@ -80,7 +106,8 @@ class ImageAPIHandler(BaseHTTPRequestHandler):
         path = parsed.path.rstrip("/") or "/"
         query = parse_qs(parsed.query)
         if path == "/health":
-            _json_response(self, 200, {"ok": True, "service": "image-library-api"})
+            _json_response(self, 200, {"ok": True, "service": "image-library-api",
+                                       "shop_id": image_library._shop(None)})
             return
         if path == "/api/images":
             try:
@@ -89,6 +116,7 @@ class ImageAPIHandler(BaseHTTPRequestHandler):
                     style=(query.get("style") or [None])[0],
                     limit=int((query.get("limit") or [100])[0]),
                     offset=int((query.get("offset") or [0])[0]),
+                    shop_id=_shop_of(query),
                 )
                 _json_response(self, 200, {"ok": True, "items": rows,
                                            "count": len(rows)})
@@ -96,14 +124,14 @@ class ImageAPIHandler(BaseHTTPRequestHandler):
                 _error(self, 400, "limit / offset 必须是数字")
             return
         if path == "/api/images/stats":
-            _json_response(self, 200, {"ok": True, **image_library.stats()})
+            _json_response(self, 200, {"ok": True, **image_library.stats(shop_id=_shop_of(query))})
             return
         if path == "/api/images/feedback":
             style = (query.get("style") or [""])[0]
             if not style:
                 _error(self, 400, "style 不能为空")
                 return
-            feedback = image_library.style_feedback(style)
+            feedback = image_library.style_feedback(style, shop_id=_shop_of(query))
             _json_response(self, 200, {"ok": True, "feedback": feedback})
             return
         if path.startswith("/media/"):
@@ -140,6 +168,7 @@ class ImageAPIHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urlparse(self.path)
         parts = [unquote(x) for x in parsed.path.strip("/").split("/")]
+        query = parse_qs(parsed.query)
         if len(parts) != 4 or parts[:2] != ["api", "images"] or parts[3] != "mark":
             _error(self, 404, "接口不存在")
             return
@@ -153,7 +182,9 @@ class ImageAPIHandler(BaseHTTPRequestHandler):
             _error(self, 400, "gallery 必须是 hot / normal / unclassified")
             return
         try:
-            row = image_library.mark(asset_id, body["gallery"], body.get("style_guidance"))
+            # shop_id 一路带到 UPDATE 的 WHERE 里:换个店铺的 id 是改不动别人的图的。
+            row = image_library.mark(asset_id, body["gallery"], body.get("style_guidance"),
+                                     shop_id=_shop_of(query))
         except ValueError as e:
             _error(self, 400, str(e))
             return
@@ -163,7 +194,9 @@ class ImageAPIHandler(BaseHTTPRequestHandler):
         _json_response(self, 200, {"ok": True, "item": row})
 
     def do_DELETE(self):
-        parts = [unquote(x) for x in urlparse(self.path).path.strip("/").split("/")]
+        parsed = urlparse(self.path)
+        parts = [unquote(x) for x in parsed.path.strip("/").split("/")]
+        query = parse_qs(parsed.query)
         if len(parts) != 3 or parts[:2] != ["api", "images"]:
             _error(self, 404, "接口不存在")
             return
@@ -172,7 +205,7 @@ class ImageAPIHandler(BaseHTTPRequestHandler):
         except ValueError:
             _error(self, 400, "图片 id 不合法")
             return
-        if not image_library.delete(asset_id):
+        if not image_library.delete(asset_id, shop_id=_shop_of(query)):
             _error(self, 404, "图片不存在或图库不可用")
             return
         _json_response(self, 200, {"ok": True, "deleted": asset_id})

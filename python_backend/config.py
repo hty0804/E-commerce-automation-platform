@@ -3,6 +3,7 @@
 本地开发可以配合 python-dotenv 用 .env 文件加载;线上部署直接在系统/容器里设置环境变量。
 """
 import os
+import re
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -92,10 +93,39 @@ ORDER_COUNT_DROP_THRESHOLD = _float("ORDER_COUNT_DROP_THRESHOLD", 0.5)  # 每小
 # 报多了人就不看告警了 —— 误报比漏报更伤系统。建议设为日均单小时的 20%~30%。
 ORDER_MIN_PREVIOUS = _float("ORDER_MIN_PREVIOUS", 5)
 
+# ------------------ 多店铺(防关联多账号) ------------------
+# 同一台机器上跑多家店时,靠 SHOP_ID 做数据隔离。它会出现在三个地方:
+#   1. 指标历史库 metric_history.shop_id
+#   2. 图片库     image_assets.shop_id
+#   3. 状态文件名 state_<SHOP_ID>.json(游标 / LLM 冷却 / 告警去重 / 上架幂等 / 心跳)
+#
+# 为什么状态文件用"分文件"而不是"给每个 key 加前缀":
+#   state.json 里的 key 有 _cursor: / _llm: / _alert: / _pdd_goods: / _last_run
+#   好几种形态,逐个加前缀很容易漏掉一个 —— 而漏掉的那个就是两家店共用一份位点
+#   (典型后果:A 店推过告警把 B 店的去重位点也占掉了,B 店的真故障被静默跳过)。
+#   换成文件名只改一处,而且天然隔离。
+#
+# 前端「店铺管理」页导出的 .env 里会带上 SHOP_ID,直接对得上。
+SHOP_ID = (os.getenv("SHOP_ID") or "default").strip() or "default"
+SHOP_NAME = os.getenv("SHOP_NAME", "").strip()
+
+
+def _shop_state_file(shop_id: str) -> str:
+    """
+    状态文件路径。default 店铺**保持老路径 state.json** ——
+    已经在跑的部署升级后能直接读到原有位点,不会因为换了文件名就从"首次运行"重来
+    (那会导致游标丢失、幂等失效、心跳被当成从未运行)。
+    """
+    if not shop_id or shop_id == "default":
+        return os.path.join(_HERE, "state.json")
+    safe = re.sub(r"[^A-Za-z0-9_-]", "_", shop_id)[:40] or "default"
+    return os.path.join(_HERE, f"state_{safe}.json")
+
+
 # ------------------ 状态文件 ------------------
 # 用绝对路径:以前是相对路径 "state.json",实际落在哪取决于 crontab 的 CWD,
 # crontab 里少写一个 cd 就会在别处生成新文件,表现为"每次都是首次运行、永远不告警"。
-STATE_FILE = os.getenv("STATE_FILE") or os.path.join(_HERE, "state.json")
+STATE_FILE = os.getenv("STATE_FILE") or _shop_state_file(SHOP_ID)
 
 # ------------------ 大模型建议(可选,默认关闭) ------------------
 # 不配置 LLM_API_KEY 时完全不发起任何请求,告警照常发送(用内置规则建议)。

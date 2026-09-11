@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>电商 SOP 自动化控制台</title>
-<link rel="stylesheet" href="assets/css/style.css?v=7" />
+<link rel="stylesheet" href="assets/css/style.css?v=8" />
 </head>
 <body>
 
@@ -83,6 +83,11 @@
       </div>
       <div class="header-spacer"></div>
       <div class="header-actions">
+        <div class="shop-switch" id="shopSwitch" title="当前店铺：切换后商品 / 任务 / 告警 / 日志 / 凭证全部随之切换">
+          <span class="ss-ic"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9.5 4.7 4h14.6L21 9.5"/><path d="M4.5 9.5V20h15V9.5"/><path d="M9.5 20v-5h5v5"/></svg></span>
+          <select id="shopSelect" aria-label="切换店铺"></select>
+          <span class="ss-count" id="shopCount"></span>
+        </div>
         <span class="mode-chip" id="modeChip" title="点击切换演示/真实模式">
           <i class="dot pulse"></i><span class="txt" id="modeChipText">演示模式</span>
         </span>
@@ -97,10 +102,10 @@
 <div id="modalRoot"></div>
 <div class="toast-root" id="toastRoot"></div>
 
-<script src="assets/js/listing_rules.js?v=7"></script>
-<script src="assets/js/store.js?v=7"></script>
-<script src="assets/js/ui.js?v=7"></script>
-<script src="assets/js/views.js?v=7"></script>
-<script src="assets/js/app.js?v=7"></script>
+<script src="assets/js/listing_rules.js?v=8"></script>
+<script src="assets/js/store.js?v=8"></script>
+<script src="assets/js/ui.js?v=8"></script>
+<script src="assets/js/views.js?v=8"></script>
+<script src="assets/js/app.js?v=8"></script>
 </body>
 </html>

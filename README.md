@@ -429,9 +429,61 @@ direction = "both"  → |change_ratio| >= threshold 时告警（价格）
 
 ## 数据说明
 
-所有数据保存在浏览器 `localStorage`（键名 `ecom_sop_admin_v1`），刷新不丢失，
+所有数据保存在浏览器 `localStorage`，刷新不丢失，
 清除浏览器数据或点击设置页「重置数据」即可恢复初始演示数据。
 演示模式不会向任何外部地址发起请求。
+
+## 多店铺（防关联多账号）
+
+一个控制台管多家店，数据按 `shop_id` 完全隔离。
+
+### 为什么是「分库」而不是「每条记录加 shop_id 字段」
+
+给每条记录加字段，意味着每个视图的每次查询都要记得带店铺过滤 ——
+**漏掉任何一处就是串店**（把 A 店的商品显示在 B 店），而且这种错不报错、
+只在数据上体现，属于最难查的一类问题。分库之后，内存里的那份数据
+本身就是「当前店铺的全部数据」，商品 / 任务 / 告警 / 日志 / 指标 /
+凭证 / 告警渠道 / 图片库全部天然隔离，视图层一行都不用改。
+
+### 存储布局
+
+```
+ecom_sop_shops                  # 店铺注册表（全局唯一）
+ecom_sop_active_shop            # 当前店铺 id
+ecom_sop_admin_v1::<shop_id>    # 某家店的完整数据
+```
+
+> 老版本的单店数据（键名 `ecom_sop_admin_v1`）在首次打开时会**整体搬进「主店」**，
+> 不是重建 —— 升级不会丢商品、任务、告警和凭证。
+
+### 后端按店隔离
+
+在「平台与凭证」页填好配置后点**下载 .env**，导出的文件里带 `SHOP_ID`。
+后端用它隔离三处数据：
+
+| 位置 | 隔离方式 |
+| --- | --- |
+| 状态文件 | `state_<SHOP_ID>.json`（游标 / LLM 冷却 / 告警去重 / 上架幂等 / 心跳） |
+| 指标历史库 | `metric_history.shop_id`（基线对比按店取样，不会拿别家的量当基线） |
+| 图片库 | `image_assets.shop_id`（唯一键是 `(shop_id, sha256)`，同一张图可各自登记） |
+
+同一台机器跑多家店时，给每个 crontab 行设不同的 `SHOP_ID` 即可：
+
+```bash
+# 两家店各自一条 crontab，数据完全隔离
+0 * * * * cd /path/to/python_backend && SHOP_ID=shop_us python3 main.py monitor
+0 * * * * cd /path/to/python_backend && SHOP_ID=shop_uk python3 main.py monitor
+```
+
+图片库 API 的每个接口都接受 `?shop_id=`（前端图片库页面会自动带上当前店铺）：
+
+```bash
+curl "http://127.0.0.1:8765/api/images/stats?shop_id=shop_us"
+python main.py images stats --shop shop_uk
+```
+
+`SHOP_ID=default` 时状态文件保持老路径 `state.json`，已在跑的部署升级后
+能直接读到原有位点，不会因为换文件名就从「首次运行」重来。
 
 ## 安全须知（务必阅读）
 
@@ -459,7 +511,7 @@ direction = "both"  → |change_ratio| >= threshold 时告警（价格）
 本仓库**无需构建**：前端是纯静态文件，双击 `index.html` 即可运行。
 
 ```bash
-# 1) 前端冒烟测试（验证 9 个页面渲染 + Listing 全流程）
+# 1) 前端冒烟测试（验证 10 个页面渲染 + Listing 全流程 + 多店铺隔离）
 npm install        # 安装 jsdom 开发依赖
 npm test          # 等价于 node smoke_test.js，应输出 PASS: 38  FAIL: 0
 

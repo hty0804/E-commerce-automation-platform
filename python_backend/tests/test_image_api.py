@@ -105,6 +105,53 @@ class TestImageAPI(unittest.TestCase):
         self.assertIn(status, (400, 404))
         self.assertFalse(data["ok"])
 
+    def test_shop_id_scopes_every_endpoint(self):
+        """
+        多店铺走 HTTP 全链路:前端图片库页面会给每个请求带上 shop_id。
+        这里把 list / stats / mark / feedback / delete 逐个验一遍 ——
+        少隔离任何一个,两家店就会互相看到、甚至改到对方的图。
+        """
+        def _rec(name, sha):
+            return {"ok": True, "path": "/tmp/" + name, "name": name, "sha256": sha,
+                    "bytes": 10, "meta": {"style": "scene", "style_label": "场景氛围图",
+                                          "subject": name}}
+        a = image_library.add_asset(_rec("a.png", "sha-a"), shop_id="shop_a")
+        image_library.add_asset(_rec("b.png", "sha-b"), shop_id="shop_b")
+
+        _, data, _ = self.req("GET", "/api/images?shop_id=shop_a")
+        self.assertEqual(data["count"], 1)
+        self.assertEqual(data["items"][0]["shop_id"], "shop_a")
+
+        _, data, _ = self.req("GET", "/api/images/stats?shop_id=shop_b")
+        self.assertEqual(data["total"], 1)
+        _, data, _ = self.req("GET", "/api/images/stats?shop_id=shop_c")
+        self.assertEqual(data["total"], 0)
+
+        # 拿 B 店的身份去改 A 店的图 → 404,且 A 店数据没被动
+        status, _, _ = self.req("POST", f"/api/images/{a['id']}/mark?shop_id=shop_b",
+                                {"gallery": "hot"})
+        self.assertEqual(status, 404)
+        self.assertEqual(image_library.get(a["id"], shop_id="shop_a")["gallery"],
+                         "unclassified")
+
+        # 删除同理
+        status, _, _ = self.req("DELETE", f"/api/images/{a['id']}?shop_id=shop_b")
+        self.assertEqual(status, 404)
+        self.assertIsNotNone(image_library.get(a["id"], shop_id="shop_a"))
+
+        # 爆款反哺也必须按店:门槛设 1 只为测试快,门槛逻辑由 image_library 测试覆盖
+        with mock.patch.object(config, "IMAGE_HOT_MIN_SAMPLES", 1):
+            self.req("POST", f"/api/images/{a['id']}/mark?shop_id=shop_a",
+                     {"gallery": "hot", "style_guidance": "暖光"})
+            _, data, _ = self.req("GET", "/api/images/feedback?style=scene&shop_id=shop_a")
+            self.assertIsNotNone(data["feedback"])
+            _, data, _ = self.req("GET", "/api/images/feedback?style=scene&shop_id=shop_b")
+            self.assertIsNone(data["feedback"], "A 店的爆款风格不能出现在 B 店")
+
+        # health 汇报服务当前落在哪家店,便于排查"请求打到了别的店铺"
+        _, data, _ = self.req("GET", "/health")
+        self.assertTrue(data["shop_id"])
+
 
 if __name__ == "__main__":
     unittest.main()

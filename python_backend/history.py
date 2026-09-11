@@ -45,20 +45,30 @@ CREATE TABLE IF NOT EXISTS metric_history (
     dow      INTEGER,                -- 星期几(0=周一..6=周日)。可为 NULL:
                                      --   ALTER TABLE 加列时不能有 NOT NULL(无默认值),
                                      --   老库迁移期间先留空再回填。
-    value    REAL NOT NULL
+    value    REAL NOT NULL,
+    shop_id  TEXT NOT NULL DEFAULT 'default'   -- 多店铺隔离维度(见 config.SHOP_ID)
 );
-CREATE INDEX IF NOT EXISTS idx_mh_series ON metric_history(platform, key, ts);
-CREATE INDEX IF NOT EXISTS idx_mh_hour   ON metric_history(platform, key, hour, ts);
 """
 
-# dow 上的索引**不能**和建表放在同一段里:老库升级时 CREATE TABLE IF NOT EXISTS
-# 会被跳过(表已存在),紧接着建这个索引就会因为 dow 列还不存在而报
-# no such column: dow,整个建表流程失败 —— 结果是升级后历史库直接不可用。
-# 所以它必须等迁移加完列之后再建。
-_INDEX_DOW = ("CREATE INDEX IF NOT EXISTS idx_mh_dow "
-              "ON metric_history(platform, key, dow, hour, ts)")
+# 索引统一在迁移**之后**建,不放进 _SCHEMA。
+# 原因和 dow 一样:老库里 CREATE TABLE IF NOT EXISTS 会被跳过,
+# 紧跟着建的索引如果引用了新列(shop_id / dow)就会报 no such column,
+# 整个建表流程失败 —— 结果是升级后历史库直接不可用。
+_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_mh_series ON metric_history(shop_id, platform, key, ts)",
+    "CREATE INDEX IF NOT EXISTS idx_mh_hour   ON metric_history(shop_id, platform, key, hour, ts)",
+    "CREATE INDEX IF NOT EXISTS idx_mh_dow    ON metric_history(shop_id, platform, key, dow, hour, ts)",
+)
 
-# 老库升级:加 dow 列并把历史行回填出来。
+# 老库里的同名索引不含 shop_id,而 CREATE INDEX IF NOT EXISTS 对**已存在**的索引
+# 不会更新定义 —— 不先 DROP 的话,按店查询就用不上索引,退化成全表扫描。
+_DROP_LEGACY_INDEXES = (
+    "DROP INDEX IF EXISTS idx_mh_series",
+    "DROP INDEX IF EXISTS idx_mh_hour",
+    "DROP INDEX IF EXISTS idx_mh_dow",
+)
+
+# 老库升级:补 dow 列并把历史行回填出来。
 # 用 SQL 直接算,避免把几百万行读进 Python 再逐行 UPDATE。
 #   SQLite 的 strftime('%w') 是 0=周日..6=周六,而 Python 的 weekday() 是 0=周一,
 #   所以 (w + 6) % 7 把两边对齐 —— 这个偏移搞错的话,基线会系统性取错星期几,
@@ -67,6 +77,12 @@ _MIGRATE_DOW = """
 UPDATE metric_history
    SET dow = (CAST(strftime('%w', ts, 'unixepoch', 'localtime') AS INTEGER) + 6) % 7
          WHERE dow IS NULL
+"""
+
+# 老库升级:补 shop_id 列。老数据全部归入 default 店铺 ——
+# 它们本来就是升级前那唯一一家店的数据,归到 default 才接得上。
+_MIGRATE_SHOP = """
+UPDATE metric_history SET shop_id = 'default' WHERE shop_id IS NULL OR shop_id = ''
 """
 
 # 连接失败时只警告一次,别每轮刷屏
@@ -94,20 +110,24 @@ def close() -> None:
 
 def _ensure_schema(conn: sqlite3.Connection) -> bool:
     """
-    保证表已建。建过了就跳过 —— 复用连接后这条 SQL 每轮只跑一次,开销可忽略。
+    保证表已建、列已补齐、索引已重建。建过了就跳过 —— 复用连接后这段每轮只跑一次。
 
-    为什么不能只在"新建连接"时建表:
-        连接是复用的,而 write=False 打开的连接**故意不建表**(is_available() 要靠
-        "表不存在"来判断这个库还没初始化过)。于是顺序一旦是"先读后写",
-        复用的就是一个没建表的连接,写入时报 no such table。
-        所以"表建好没"必须作为独立状态跟着连接走,而不是隐含在"新建"这个动作里。
+    读写连接都要走这一步。以前只在 write=True 时跑,理由是"读连接不建表,
+    is_available() 才能靠表不存在来判断库没初始化" —— 但 is_available() 其实是
+    自己显式查表的(见下),并不依赖这个副作用。真正被这个优化坑到的是:
+    进程里第一次访问如果是**读**(图片库 API 的 GET、history 命令的 recent),
+    老库的结构升级就不会发生,按新列过滤的查询全部 no such column 被吞掉,
+    返回空 —— 看起来就是"库是空的",而不是报错。
     """
     if getattr(_thread_local, "schema_ready", False):
         return True
     try:
         conn.executescript(_SCHEMA)
-        _migrate_add_dow(conn)   # 老库补列 —— 必须在建 dow 索引之前
-        conn.execute(_INDEX_DOW)
+        _migrate(conn)                    # 老库补 dow / shop_id 列并回填
+        _rebuild_indexes_if_stale(conn)   # 老索引不含 shop_id → 必须先 DROP 再建
+        for sql in _INDEXES:
+            conn.execute(sql)
+        conn.commit()
         _thread_local.schema_ready = True
         return True
     except sqlite3.Error as e:
@@ -116,25 +136,62 @@ def _ensure_schema(conn: sqlite3.Connection) -> bool:
         return False
 
 
-def _migrate_add_dow(conn: sqlite3.Connection) -> None:
-    """
-    给早先建的库补上 dow 列(那时还没有"区分工作日/周末"这个能力)。
+def _index_covers(conn: sqlite3.Connection, index_name: str, column: str) -> bool:
+    """索引定义里是否包含某一列。索引不存在时返回 False。"""
+    try:
+        rows = conn.execute(f"PRAGMA index_info({index_name})").fetchall()
+    except sqlite3.Error:
+        return False
+    return any((r[2] or "") == column for r in rows)
 
-    为什么不能用 CREATE TABLE IF NOT EXISTS 顺便解决:
-        表已经存在时这条语句直接跳过,新列根本不会被加上。列的新增只能靠
-        ALTER TABLE,而且必须显式判断列是否已存在 —— 否则每次启动都跑一遍迁移。
+
+def _rebuild_indexes_if_stale(conn: sqlite3.Connection) -> None:
     """
+    老库的索引是按 (platform, key, ...) 建的,不含 shop_id。
+    CREATE INDEX IF NOT EXISTS 对**已存在**的索引不会更新定义,
+    所以必须显式 DROP 掉再重建 —— 否则加了 shop_id 过滤之后,
+    这条索引在"按店查询"这个唯一用法上完全用不上,退化成全表扫描
+    (24 万行的库里这就是毫秒级 vs 秒级的区别)。
+    """
+    if _index_covers(conn, "idx_mh_series", "shop_id"):
+        return
+    for sql in _DROP_LEGACY_INDEXES:
+        conn.execute(sql)
+    log.info("指标历史库索引已重建:加入 shop_id 维度")
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """给早先建的库补列(dow / shop_id)并回填老行。必须跑在建索引之前。"""
     cols = {row[1] for row in conn.execute("PRAGMA table_info(metric_history)")}
+
     if "dow" not in cols:
         conn.execute("ALTER TABLE metric_history ADD COLUMN dow INTEGER")
         conn.execute(_MIGRATE_DOW)
         conn.commit()
         log.info("指标历史库已升级:新增 dow 列并回填 %d 行", conn.total_changes)
-    elif conn.execute(
-            "SELECT 1 FROM metric_history WHERE dow IS NULL LIMIT 1").fetchone():
+    elif conn.execute("SELECT 1 FROM metric_history WHERE dow IS NULL LIMIT 1").fetchone():
         # 列在但值没回填(上一轮迁移被打断):补一次
         conn.execute(_MIGRATE_DOW)
         conn.commit()
+
+    if "shop_id" not in cols:
+        # 带上 DEFAULT 'default':SQLite 允许 NOT NULL 列只要有非空默认值,
+        # 老行会自动落到 default 店铺 —— 它们本来就是升级前那唯一一家店的数据,
+        # 归到 default 才接得上(换成别的 id 等于历史数据凭空消失,基线全部失效)。
+        conn.execute(
+            "ALTER TABLE metric_history ADD COLUMN shop_id TEXT NOT NULL DEFAULT 'default'")
+        conn.execute(_MIGRATE_SHOP)
+        conn.commit()
+        log.info("指标历史库已升级:新增 shop_id 列,老数据归入 default 店铺")
+    elif conn.execute(
+            "SELECT 1 FROM metric_history WHERE shop_id IS NULL OR shop_id='' LIMIT 1").fetchone():
+        conn.execute(_MIGRATE_SHOP)
+        conn.commit()
+
+
+def _shop(shop_id: Optional[str] = None) -> str:
+    """统一的店铺解析顺序:显式传入 > config.SHOP_ID > 'default'。"""
+    return str(shop_id or getattr(config, "SHOP_ID", "") or "default").strip() or "default"
 
 
 def _connect(write: bool = True) -> Optional[sqlite3.Connection]:
@@ -160,7 +217,12 @@ def _connect(write: bool = True) -> Optional[sqlite3.Connection]:
     db_path = config.HISTORY_DB
     cached = getattr(_thread_local, "conn", None)
     if cached is not None and getattr(_thread_local, "db_path", None) == db_path:
-        if write and not _ensure_schema(cached):
+        # 读连接也要跑 _ensure_schema:否则"先读后写"的顺序下,
+        # 老库的结构升级要等到第一次写入才发生 —— 在那之前所有按新列
+        # (shop_id)过滤的查询都会 no such column,被 except 吞掉后返回空,
+        # 表现为"历史库明明是满的,基线却永远样本不足"。
+        # 代价可忽略:每个连接只跑一次,之后靠 schema_ready 短路。
+        if not _ensure_schema(cached):
             return None
         return cached
     if cached is not None:
@@ -180,7 +242,7 @@ def _connect(write: bool = True) -> Optional[sqlite3.Connection]:
         _thread_local.conn = conn
         _thread_local.db_path = db_path
         _thread_local.schema_ready = False
-        if write and not _ensure_schema(conn):
+        if not _ensure_schema(conn):
             return None
         return conn
     except (sqlite3.Error, OSError) as e:
@@ -210,11 +272,12 @@ def is_available() -> bool:
         pass  # 连接由 _connect 按线程复用,这里**不能** close
 
 
-def record(platform: str, key: str, value: float, ts: Optional[float] = None) -> bool:
+def record(platform: str, key: str, value: float, ts: Optional[float] = None,
+           shop_id: Optional[str] = None) -> bool:
     """写一条历史。value 为 None 表示这轮没取到数,不记 —— 不污染基线。"""
     if value is None:
         return False
-    return record_many([(platform, key, value, ts)])
+    return record_many([(platform, key, value, ts)], shop_id=shop_id)
 
 
 def _focus_only_active() -> bool:
@@ -244,12 +307,15 @@ def _is_focus_key(key: str) -> bool:
     return False
 
 
-def record_many(samples: Sequence[Tuple[str, str, float, Optional[float]]]) -> bool:
+def record_many(samples: Sequence[Tuple[str, str, float, Optional[float]]],
+                shop_id: Optional[str] = None) -> bool:
     """
     批量写历史(单事务)。
 
     :param samples: [(platform, key, value, ts|None), ...]
+    :param shop_id: 店铺隔离维度,缺省用 config.SHOP_ID。
     """
+    shop = _shop(shop_id)
     focus_only = _focus_only_active()
     rows = []
     for platform, key, value, ts in samples:
@@ -264,7 +330,7 @@ def record_many(samples: Sequence[Tuple[str, str, float, Optional[float]]]) -> b
         moment = datetime.datetime.fromtimestamp(ts)
         try:
             rows.append((platform, key, float(ts), moment.hour, moment.weekday(),
-                         float(value)))
+                         float(value), shop))
         except (TypeError, ValueError):
             # 拿不到数字就不记,别让一条脏数据把整批写挂
             continue
@@ -276,8 +342,8 @@ def record_many(samples: Sequence[Tuple[str, str, float, Optional[float]]]) -> b
         return False
     try:
         conn.executemany(
-            "INSERT INTO metric_history (platform, key, ts, hour, dow, value) "
-            "VALUES (?,?,?,?,?,?)",
+            "INSERT INTO metric_history (platform, key, ts, hour, dow, value, shop_id) "
+            "VALUES (?,?,?,?,?,?,?)",
             rows,
         )
         conn.commit()
@@ -293,7 +359,8 @@ def baseline(platform: str, key: str, ts: Optional[float] = None,
              lookback_days: Optional[int] = None,
              min_samples: Optional[int] = None,
              hour_window: int = 0,
-             match_dow: Optional[bool] = None) -> Tuple[Optional[float], int]:
+             match_dow: Optional[bool] = None,
+             shop_id: Optional[str] = None) -> Tuple[Optional[float], int]:
     """
     取"历史上同一时段"的中位数作为基线。
 
@@ -302,6 +369,9 @@ def baseline(platform: str, key: str, ts: Optional[float] = None,
                       ⚠️ 开启后样本会少一大截(7 天回看里每个星期几只有 1 条),
                       所以必须配合 baseline_with_fallback() 的降级链 ——
                       单用这个函数很容易一直"样本不足",等于基线没开。
+    :param shop_id: 店铺隔离维度。缺省用 config.SHOP_ID。
+                    **必须按店过滤**:否则 A 店的订单基线会把 B 店的量算进去,
+                    基线被抬高 → B 店真跌了也判成"正常波动"被抑制掉(静默漏报)。
     :return: (基线值, 样本数)。样本不足或库不可用时返回 (None, 实际样本数)。
 
     为什么用中位数而不是平均数:一两次促销 / 断货会把平均值拉偏,
@@ -311,6 +381,7 @@ def baseline(platform: str, key: str, ts: Optional[float] = None,
     min_samples = min_samples if min_samples is not None else config.BASELINE_MIN_SAMPLES
     if match_dow is None:
         match_dow = getattr(config, "BASELINE_MATCH_DOW", True)
+    shop = _shop(shop_id)
 
     conn = _connect(write=False)
     if conn is None:
@@ -329,9 +400,10 @@ def baseline(platform: str, key: str, ts: Optional[float] = None,
             f"SELECT value FROM metric_history "
             # ts 用严格小于:本轮采集的值本身就是 now_ts,若用 <= 就会把自己算进基线,
             # 变成"自己跟自己比" —— 基线永远等于当前值,所有异常都被判为正常波动。
-            f"WHERE platform=? AND key=? AND ts>=? AND ts<? AND hour IN ({placeholders})"
+            f"WHERE shop_id=? AND platform=? AND key=? AND ts>=? AND ts<? "
+            f"AND hour IN ({placeholders})"
         )
-        params = [platform, key, since, ts, *hours]
+        params = [shop, platform, key, since, ts, *hours]
         if match_dow:
             sql += " AND dow=?"
             params.append(now.weekday())
@@ -349,13 +421,14 @@ def baseline(platform: str, key: str, ts: Optional[float] = None,
     return _median(values), len(values)
 
 
-def baseline_with_fallback(platform: str, key: str, ts: Optional[float] = None
+def baseline_with_fallback(platform: str, key: str, ts: Optional[float] = None,
+                           shop_id: Optional[str] = None
                            ) -> Tuple[Optional[float], int]:
     """
     从最严到最松依次放宽,取第一个样本够的口径。
 
         同星期几 + 同小时  →  同星期几 + 小时±1  →  不挑星期几 + 同小时
-                                              →  不挑星期几 + 小时±1
+                                             →  不挑星期几 + 小时±1
 
     ⚠️ 这条降级链是**必需的**,不是锦上添花:
         区分星期几之后,7 天回看里每个星期几只剩 1 条样本,而 min_samples 默认 3 ——
@@ -366,17 +439,17 @@ def baseline_with_fallback(platform: str, key: str, ts: Optional[float] = None
     数据充足时用最精确的口径(周末的量和周末比),新上的 SKU 数据少时靠放宽尽快攒够样本。
     """
     if getattr(config, "BASELINE_MATCH_DOW", True):
-        b, n = baseline(platform, key, ts, hour_window=0, match_dow=True)
+        b, n = baseline(platform, key, ts, hour_window=0, match_dow=True, shop_id=shop_id)
         if b is not None:
             return b, n
-        b, n = baseline(platform, key, ts, hour_window=1, match_dow=True)
+        b, n = baseline(platform, key, ts, hour_window=1, match_dow=True, shop_id=shop_id)
         if b is not None:
             return b, n
 
-    b, n = baseline(platform, key, ts, hour_window=0, match_dow=False)
+    b, n = baseline(platform, key, ts, hour_window=0, match_dow=False, shop_id=shop_id)
     if b is not None:
         return b, n
-    return baseline(platform, key, ts, hour_window=1, match_dow=False)
+    return baseline(platform, key, ts, hour_window=1, match_dow=False, shop_id=shop_id)
 
 
 def _median(values: Sequence[float]) -> float:
@@ -387,15 +460,17 @@ def _median(values: Sequence[float]) -> float:
     return (s[m - 1] + s[m]) / 2.0
 
 
-def recent(platform: str, key: str, limit: int = 50) -> List[Tuple[float, float]]:
-    """最近 N 条历史,[(ts, value), ...],按时间正序"""
+def recent(platform: str, key: str, limit: int = 50,
+           shop_id: Optional[str] = None) -> List[Tuple[float, float]]:
+    """最近 N 条历史,[(ts, value), ...],按时间正序。只返回指定店铺的。"""
     conn = _connect(write=False)
     if conn is None:
         return []
     try:
         cur = conn.execute(
-            "SELECT ts, value FROM metric_history WHERE platform=? AND key=? "
-            "ORDER BY ts DESC LIMIT ?", [platform, key, limit])
+            "SELECT ts, value FROM metric_history "
+            "WHERE shop_id=? AND platform=? AND key=? "
+            "ORDER BY ts DESC LIMIT ?", [_shop(shop_id), platform, key, limit])
         rows = cur.fetchall()
     except sqlite3.Error:
         return []
@@ -404,15 +479,17 @@ def recent(platform: str, key: str, limit: int = 50) -> List[Tuple[float, float]
     return list(reversed(rows))
 
 
-def series() -> List[Tuple[str, str, int, Optional[float], Optional[float]]]:
-    """列出所有指标序列:(platform, key, 样本数, 最早时间, 最新时间)"""
+def series(shop_id: Optional[str] = None
+           ) -> List[Tuple[str, str, int, Optional[float], Optional[float]]]:
+    """列出**指定店铺**的所有指标序列:(platform, key, 样本数, 最早时间, 最新时间)"""
     conn = _connect(write=False)
     if conn is None:
         return []
     try:
         cur = conn.execute(
             "SELECT platform, key, COUNT(*), MIN(ts), MAX(ts) "
-            "FROM metric_history GROUP BY platform, key ORDER BY platform, key")
+            "FROM metric_history WHERE shop_id=? "
+            "GROUP BY platform, key ORDER BY platform, key", [_shop(shop_id)])
         return [tuple(r) for r in cur.fetchall()]
     except sqlite3.Error:
         return []
@@ -421,7 +498,14 @@ def series() -> List[Tuple[str, str, int, Optional[float], Optional[float]]]:
 
 
 def prune(retention_days: Optional[int] = None) -> int:
-    """清理超过保留期的历史,返回删除行数"""
+    """
+    清理超过保留期的历史,返回删除行数。
+
+    ⚠️ 这里刻意**不按店铺过滤**:保留期是全局运维策略,不是业务数据。
+    只清自己那家店的话,已经停用的店铺数据会永远留在库里没人回收
+    (而它恰好是最该被清掉的那部分)。按时间删除不涉及"看到别人的数据",
+    所以不违反多店铺隔离。
+    """
     retention_days = retention_days if retention_days is not None else config.HISTORY_RETENTION_DAYS
     conn = _connect(write=False)
     if conn is None:

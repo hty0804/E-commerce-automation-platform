@@ -135,7 +135,9 @@ try {
   const v2 = JSON.parse(JSON.stringify(cur));
   v2.version = 2;
   delete v2.settings.listing;
-  window.localStorage.setItem('ecom_sop_admin_v1', JSON.stringify(v2));
+  // 写回当前店铺自己的键（多店铺分库后键名带 shop_id），
+  // 不再硬编码旧键名 —— 将来改分库格式时这条测试仍然有效。
+  window.localStorage.setItem(S.storageKey(S.activeShopId()), JSON.stringify(v2));
   S.load();
   const d = S.get();
   ok('v2->v3 bumps to version 3', d.version === 3);
@@ -143,6 +145,86 @@ try {
   ok('v2->v3 adds image library settings', !!(d.settings && d.settings.imageLibrary));
   ok('v2->v3 preserves stats', !!(d.stats && typeof d.stats.totalRuns === 'number'));
 } catch (e) { ok('v2->v3 migration', false); console.log('  -> ' + e.message + '\n' + e.stack); }
+
+/* ---------- 多店铺：注册表 / 隔离 / 迁移 / 切换 ---------- */
+try {
+  const main = S.activeShop();
+  ok('默认存在一个主店', !!main && main.id === 'shop_default');
+  ok('主店承载了老数据（迁移是搬家不是重建）', S.get().products.length > 0);
+  ok('数据自带 shopId 归属', S.get().shopId === main.id);
+  ok('注册表里有主店', S.shops().some(s => s.id === main.id));
+
+  const beforeMain = S.get().products.length;
+
+  // 新建一个**空库**店铺：不能塞演示数据，否则真店和假数据混在一起
+  const made = S.createShop('测试二店', { seed: false });
+  ok('createShop 成功', made.ok);
+  ok('同名店铺被拒绝', S.createShop('测试二店').ok === false);
+  ok('新建店铺不影响当前店铺', S.activeShopId() === main.id && S.get().products.length === beforeMain);
+
+  // 切到二店：必须是空库，且各视图/统计都不能因为空数据而炸
+  S.switchShop(made.shop.id);
+  ok('切到二店后 activeShopId 正确', S.activeShopId() === made.shop.id);
+  ok('空店不塞假商品', S.get().products.length === 0);
+  ok('空店统计不炸', typeof S.stats().total === 'number');
+  try {
+    Object.keys(V).forEach(k => {
+      const out = V[k].render();
+      if (!(typeof out === 'string' && out.length > 0)) throw new Error(k + ' 渲染为空');
+    });
+    ok('空店能渲染所有视图', true);
+  } catch (e) { ok('空店能渲染所有视图', false); console.log('  -> ' + e.message); }
+
+  // 隔离验证：在二店加一个商品，主店不能看见
+  S.saveProduct({ id: null, platform: 'amazon', sku: 'SHOP2-001', title: '二店专属商品', category: '3C数码', price: 9.9, currency: 'USD', stock: 5, status: 'pending', autoSync: true });
+  ok('二店能看到自己的商品', S.get().products.some(p => p.sku === 'SHOP2-001'));
+
+  S.switchShop(main.id);
+  ok('主店看不到二店的商品（分库隔离）', !S.get().products.some(p => p.sku === 'SHOP2-001'));
+  ok('主店商品数未被二店影响', S.get().products.length === beforeMain);
+  ok('切换后 activeShopId 正确', S.activeShopId() === main.id);
+
+  // 重命名
+  ok('renameShop 成功', S.renameShop(made.shop.id, '测试二店-改名').ok);
+  ok('重命名后注册表可见', S.shops().some(s => s.name === '测试二店-改名'));
+  ok('重名被拒绝', S.renameShop(made.shop.id, '主店').ok === false);
+
+  // 删除：不能删到 0 个，且删店要连带删掉它那一库数据
+  ok('removeShop 成功', S.removeShop(made.shop.id).ok);
+  ok('删店后注册表只剩主店', S.shops().length === 1);
+  ok('删店后存储键被清掉', !window.localStorage.getItem(S.storageKey(made.shop.id)));
+  ok('不允许删掉最后一个店铺', S.removeShop(main.id).ok === false);
+
+  // .env 导出必须带上 SHOP_ID，后端靠它做数据隔离
+  const env = S.exportEnv();
+  ok('exportEnv 含 SHOP_ID', /^SHOP_ID=/m.test(env));
+  ok('exportEnv 的 SHOP_ID 与当前店铺一致', env.indexOf('SHOP_ID=' + main.id) >= 0);
+} catch (e) { ok('多店铺数据层', false); console.log('  -> ' + e.message + '\n' + e.stack); }
+
+/* ---------- 多店铺：顶栏切换器 + 店铺管理视图 ---------- */
+try {
+  const sel = window.document.getElementById('shopSelect');
+  ok('顶栏存在店铺切换器', !!sel);
+  window.App.renderShopSwitcher();
+  ok('切换器渲染出全部店铺', sel.options.length === S.shops().length);
+  ok('切换器选中当前店铺', sel.value === S.activeShopId());
+
+  const shopsHtml = V.shops.render();
+  ok('店铺管理视图渲染出店铺卡片', /class="shop-card/.test(shopsHtml));
+  ok('店铺管理视图含隔离说明', /SHOP_ID/.test(shopsHtml));
+
+  // 端到端：新建 → 顶栏切换 → 顶栏同步 → 删掉
+  const before = S.activeShopId();
+  const made = S.createShop('UI 测试店', { seed: false });
+  window.App.switchShop(made.shop.id);
+  ok('App.switchShop 生效', S.activeShopId() === made.shop.id);
+  ok('切换后顶栏同步', window.document.getElementById('shopSelect').value === made.shop.id);
+  window.App.stopTimer();      // switchShop 会重启定时器，别让 setInterval 拖住进程
+  window.App.switchShop(before);
+  window.App.stopTimer();
+  ok('切回原店铺', S.activeShopId() === before);
+  ok('清理测试店铺', S.removeShop(made.shop.id).ok);
+} catch (e) { ok('店铺切换器', false); console.log('  -> ' + e.message + '\n' + e.stack); }
 
 // Listing generation pipeline (amazon, rule fallback)
 try {

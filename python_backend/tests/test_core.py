@@ -339,6 +339,30 @@ class TestConfigRobust(Base):
     def test_state_file_is_absolute(self):
         self.assertTrue(os.path.isabs(config.STATE_FILE))
 
+    def test_state_file_is_per_shop(self):
+        """
+        多店铺:状态文件必须按 SHOP_ID 分文件。
+
+        不分的话两家店共用一份 游标 / LLM 冷却 / 告警去重 / 上架幂等位点 ——
+        典型后果是 A 店推过告警把 B 店的去重位点也占了,
+        B 店的真故障被静默跳过(而群里看起来只是"今天没消息")。
+        """
+        self.assertTrue(config._shop_state_file("default").endswith("state.json"),
+                        "default 店铺必须保持老路径,升级后才读得到原有位点")
+        us = config._shop_state_file("shop_us")
+        uk = config._shop_state_file("shop_uk")
+        self.assertNotEqual(us, uk)
+        self.assertTrue(us.endswith("state_shop_us.json"), us)
+
+    def test_shop_state_file_sanitizes_unsafe_id(self):
+        """SHOP_ID 可能来自 .env 或人工输入,不能让它跳出数据目录。"""
+        p = config._shop_state_file("../../etc/passwd")
+        self.assertEqual(os.path.dirname(os.path.abspath(p)),
+                         os.path.dirname(os.path.abspath(config._shop_state_file("safe"))),
+                         "非法 SHOP_ID 不能改变文件所在目录")
+        self.assertNotIn(os.sep, os.path.basename(p))
+        self.assertNotIn("\\", os.path.basename(p))
+
 
 # ================================================================ P2
 class TestAlertDedup(Base):

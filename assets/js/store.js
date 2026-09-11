@@ -8,8 +8,35 @@
 (function (global) {
   'use strict';
 
-  var KEY = 'ecom_sop_admin_v1';
+  /* ---------------- 存储键（多店铺 / 防关联多账号）----------------
+   * 每个店铺一份**独立的** localStorage 库，键名带 shop_id。
+   *
+   * 为什么用"分库"而不是"在每条记录上加 shopId 字段"：
+   *   分字段意味着每个视图的每次查询都要记得带上 shop 过滤 ——
+   *   漏掉任何一处就是**串店**（把 A 店的商品显示在 B 店），
+   *   而且这种错不报错、只在数据上体现，属于最难查的一类问题。
+   *   分库之后，db 本身就是"当前店铺的全部数据"，
+   *   商品/任务/告警/日志/指标/凭证/告警渠道/图片库全部天然隔离，
+   *   视图层一行都不用改，也就不存在漏过滤的可能。
+   *
+   *   ecom_sop_shops               店铺注册表（全局唯一）
+   *   ecom_sop_active_shop         当前店铺 id（全局唯一）
+   *   ecom_sop_admin_v1::<shopId>  某个店铺的完整数据
+   *
+   * LEGACY_KEY 是老版本的单店键名，只在首次升级时用来把旧数据搬进「主店」。
+   * ------------------------------------------------------------- */
+  var KEY_PREFIX = 'ecom_sop_admin_v1';
+  var LEGACY_KEY = 'ecom_sop_admin_v1';
+  var SHOPS_KEY = 'ecom_sop_shops';
+  var ACTIVE_SHOP_KEY = 'ecom_sop_active_shop';
+  var DEFAULT_SHOP_ID = 'shop_default';
   var SESSION_KEY = 'ecom_sop_session';
+
+  function dbKey(shopId) { return KEY_PREFIX + '::' + shopId; }
+
+  function _lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function _lsSet(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } }
+  function _lsDel(k) { try { localStorage.removeItem(k); return true; } catch (e) { return false; } }
 
   /* ---------------- 工具函数 ---------------- */
   function uid(p) { return (p || 'id') + '_' + Math.random().toString(36).slice(2, 9); }
@@ -667,6 +694,175 @@
     };
   }
 
+  /**
+   * 新建店铺用的**空库**：配置项齐全（阈值/告警渠道/大模型/Listing 设置），
+   * 但没有任何业务数据 —— 不塞假商品、假任务、假告警。
+   *
+   * 为什么要跟 defaultDB() 区分开：defaultDB() 带一套演示数据，
+   * 那是给"第一次打开体验"用的。真实新增一个店铺时如果也灌一堆假 SKU，
+   * 用户就得先手动删干净才能开始用 —— 而假数据和真数据混在一起时，
+   * 最容易发生的是"误把演示商品当自己的商品改了"。
+   */
+  function emptyDB() {
+    var d = defaultDB();
+    d.products = [];
+    d.tasks = [];
+    d.alerts = [];
+    d.metrics = [];
+    d.logs = [];
+    d.mockImageSets = [];
+    d.stats = { totalRuns: 0, totalAlerts: 0, totalListing: 0, lastRunAt: 0 };
+    d.createdAt = now();
+    return d;
+  }
+
+  /* ==========================================================
+   * 多店铺：注册表 / 当前店铺 / 按店分库
+   * ========================================================== */
+  function _readShops() {
+    var raw = _lsGet(SHOPS_KEY);
+    if (!raw) return null;
+    try {
+      var arr = JSON.parse(raw);
+      if (Array.isArray(arr) && arr.length) return arr;
+    } catch (e) { /* 注册表损坏就当成没有，下面会重建，不能让控制台打不开 */ }
+    return null;
+  }
+  function _writeShops(list) { return _lsSet(SHOPS_KEY, JSON.stringify(list)); }
+
+  /**
+   * 确保注册表存在。首次运行（老版本升级，或全新安装）会创建「主店」。
+   *
+   * ⚠️ 老数据必须**搬家**而不是重建：直接新建一个空主店的话，
+   * 用户升级一次就丢光了所有商品、任务、告警和凭证 —— 而且没有任何提示。
+   * 所以这里把旧键的整份 JSON 原样写到新键上，只换存储位置、不动内容。
+   */
+  function _ensureShops() {
+    var list = _readShops();
+    if (list) return list;
+
+    var shop = { id: DEFAULT_SHOP_ID, name: '主店', platform: 'amazon', note: '', createdAt: now() };
+    list = [shop];
+    _writeShops(list);
+    _lsSet(ACTIVE_SHOP_KEY, shop.id);
+
+    var legacy = _lsGet(LEGACY_KEY);
+    if (legacy) {
+      // 只在目标库还不存在时写入，避免覆盖已经建好的数据
+      if (!_lsGet(dbKey(shop.id))) _lsSet(dbKey(shop.id), legacy);
+      _lsDel(LEGACY_KEY);   // 搬完清掉旧键，防止下次又被当成"老库"重复搬
+    }
+    return list;
+  }
+
+  function shops() { return _ensureShops().slice(); }
+
+  /** 当前店铺。注册表里找不到记录时回落到第一个 —— 绝不允许出现"没有当前店铺"。 */
+  function activeShop() {
+    var list = _ensureShops();
+    var id = _lsGet(ACTIVE_SHOP_KEY);
+    var found = list.filter(function (s) { return s.id === id; })[0];
+    if (found) return found;
+    _lsSet(ACTIVE_SHOP_KEY, list[0].id);
+    return list[0];
+  }
+  function activeShopId() { return activeShop().id; }
+
+  function createShop(name, opts) {
+    opts = opts || {};
+    var list = _ensureShops();
+    var clean = String(name || '').trim();
+    if (!clean) return { ok: false, msg: '店铺名称不能为空' };
+    if (list.some(function (s) { return s.name === clean; })) {
+      return { ok: false, msg: '已有同名店铺：' + clean };
+    }
+    var shop = {
+      id: uid('shop'), name: clean,
+      platform: opts.platform === 'pdd' ? 'pdd' : 'amazon',
+      note: String(opts.note || '').trim(),
+      createdAt: now()
+    };
+    list.push(shop);
+    _writeShops(list);
+    // 先落一份初始数据，避免切进去时视图读到 null。
+    // seed === false → 空库（真实店铺应该用这个）；否则给一份演示数据。
+    _lsSet(dbKey(shop.id), JSON.stringify(opts.seed === false ? emptyDB() : defaultDB()));
+    return { ok: true, shop: shop };
+  }
+
+  function renameShop(id, name) {
+    var list = _ensureShops();
+    var clean = String(name || '').trim();
+    if (!clean) return { ok: false, msg: '店铺名称不能为空' };
+    if (list.some(function (s) { return s.id !== id && s.name === clean; })) {
+      return { ok: false, msg: '已有同名店铺：' + clean };
+    }
+    var hit = list.filter(function (s) { return s.id === id; })[0];
+    if (!hit) return { ok: false, msg: '店铺不存在' };
+    hit.name = clean;
+    _writeShops(list);
+    return { ok: true, shop: hit };
+  }
+
+  /**
+   * 删除店铺，连同它那一整库数据。
+   * ⚠️ 不可恢复，调用方（UI）必须先做二次确认并明确告知数据会一起删掉。
+   */
+  function removeShop(id) {
+    var list = _ensureShops();
+    if (list.length <= 1) return { ok: false, msg: '至少要保留一个店铺' };
+    var wasActive = activeShopId() === id;
+    var idx = -1;
+    list.forEach(function (s, i) { if (s.id === id) idx = i; });
+    if (idx < 0) return { ok: false, msg: '店铺不存在' };
+
+    list.splice(idx, 1);
+    _writeShops(list);
+    _lsDel(dbKey(id));
+    if (wasActive) {
+      _lsSet(ACTIVE_SHOP_KEY, list[0].id);
+      db = null;      // 丢掉内存里那份已删店铺的数据，强制重新加载
+      load();
+    }
+    return { ok: true, active: activeShop() };
+  }
+
+  /** 切换当前店铺：先落盘当前店铺（不能丢改动），再换库重载。 */
+  function switchShop(id) {
+    var list = _ensureShops();
+    if (!list.some(function (s) { return s.id === id; })) return { ok: false, msg: '店铺不存在' };
+    if (activeShopId() === id) return { ok: true, changed: false, shop: activeShop() };
+
+    save();
+    _lsSet(ACTIVE_SHOP_KEY, id);
+    db = null;
+    load();
+    return { ok: true, changed: true, shop: activeShop() };
+  }
+
+  /**
+   * 只读地看一眼某个店铺的数据规模 —— 给店铺列表显示用。
+   *
+   * 刻意**不**走 get()/switchShop()：列个店铺清单不该有副作用，
+   * 更不能因为"看一眼"就把当前店铺切走（那会连带重置定时器、改内存里的 db）。
+   * 所以这里直接读那一份 localStorage 并解析。
+   */
+  function shopSummary(id) {
+    var empty = { exists: false, products: 0, tasks: 0, unhandled: 0, logs: 0 };
+    var raw = _lsGet(dbKey(id));
+    if (!raw) return empty;
+    try {
+      var d = JSON.parse(raw);
+      return {
+        exists: true,
+        products: (d.products || []).length,
+        tasks: (d.tasks || []).length,
+        unhandled: (d.alerts || []).filter(function (a) { return a.status === 'unhandled'; }).length,
+        logs: (d.logs || []).length
+      };
+    } catch (e) { return empty; }
+  }
+
   /* ---------------- 读写 ---------------- */
   var db = null;
 
@@ -695,8 +891,9 @@
   }
 
   function load() {
+    var shop = activeShop();     // 内部会建好注册表，并把老的单店数据搬进「主店」
     try {
-      var raw = localStorage.getItem(KEY);
+      var raw = _lsGet(dbKey(shop.id));
       if (raw) { db = JSON.parse(raw); }
     } catch (e) { db = null; }
     if (!db || !db.settings) { db = defaultDB(); save(); }
@@ -706,11 +903,18 @@
       if (!db.settings.imageLibrary) { db.settings.imageLibrary = { apiBaseUrl: 'https://629ff8cd6f86472a8e2792ea8a8a3ee9.sg2.agentos-app.run' }; save(); }
       if (!Array.isArray(db.mockImageSets)) { db.mockImageSets = []; save(); }
     }
+    // 数据自带归属：导出、排查、导 .env 时一眼能看出这份库属于哪家店。
+    db.shopId = shop.id;
     return db;
   }
   function save() {
-    try { localStorage.setItem(KEY, JSON.stringify(db)); }
-    catch (e) { console.error('保存失败', e); }
+    if (!db) return;
+    // 归属以**数据自己记的** shopId 为准，而不是当前激活店铺：
+    // 切换店铺时 save() 会在 ACTIVE_SHOP_KEY 被改写之前调用（此时两者一致），
+    // 但用 db.shopId 更稳 —— 它保证"内存里这份库"一定写回它自己的键，
+    // 不会因为外部改了激活店铺而把 A 店的数据写进 B 店的存储里。
+    db.shopId = db.shopId || activeShopId();
+    _lsSet(dbKey(db.shopId), JSON.stringify(db));
   }
   function get() { return db || load(); }
   function reset() { db = defaultDB(); save(); return db; }
@@ -1032,7 +1236,15 @@
   function exportEnv() {
     var d = get(), c = d.credentials || {}, ch = d.channels || {}, s = d.settings || {};
     var amz = c.amazon || {}, pdd = c.pdd || {}, wc = ch.wecom || {}, dt = ch.dingtalk || {};
+    var shop = activeShop();
     return [
+      '# ===== 店铺标识（多店铺隔离的关键） =====',
+      '# 后端用同一个 SHOP_ID 读写指标历史库与图片库：',
+      '# 不同 SHOP_ID 的数据互不可见。同一台机器上跑多家店时，',
+      '# 只要给每个进程/crontab 行设不同的 SHOP_ID 即可，不会串数据。',
+      'SHOP_ID=' + shop.id,
+      'SHOP_NAME=' + (shop.name || ''),
+      '',
       '# ===== 亚马逊 SP-API =====',
       'AMAZON_REFRESH_TOKEN=' + (amz.refreshToken || ''),
       'AMAZON_CLIENT_ID=' + (amz.clientId || ''),
@@ -1162,6 +1374,13 @@
   /* ---------------- 导出 ---------------- */
   global.Store = {
     load: load, save: save, get: get, reset: reset,
+    /* 多店铺：注册表 / 当前店铺 / 增删改切换 */
+    shops: shops, activeShop: activeShop, activeShopId: activeShopId,
+    createShop: createShop, renameShop: renameShop, removeShop: removeShop, switchShop: switchShop,
+    emptyDB: emptyDB, shopSummary: shopSummary,
+    /** 某个店铺在 localStorage 里的键名（形如 ecom_sop_admin_v1::shop_xxx）。
+     *  导出/排查/测试要用到它时走这里，别在别处硬编码键名格式。 */
+    storageKey: dbKey,
     runMonitor: runMonitor, detect: detect, metricLabel: metricLabel, metricValue: metricValue,
     saveProduct: saveProduct, removeProduct: removeProduct, publishProducts: publishProducts,
     saveTask: saveTask, removeTask: removeTask, toggleTask: toggleTask,

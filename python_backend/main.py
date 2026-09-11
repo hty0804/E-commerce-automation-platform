@@ -551,24 +551,51 @@ def _main() -> int:
             "      mark <id> hot|normal|unclassified [视觉锚点] # 标爆款/普通并反馈风格\n"
             "      stats                             # 查看图库统计\n"
             "      feedback <style>                  # 查看爆款反哺提示\n"
-            "      delete <id>                       # 删除图库索引(不删图片文件)"
+            "      delete <id>                       # 删除图库索引(不删图片文件)\n"
+            "      # images 子命令都支持 --shop <SHOP_ID> 临时指定店铺\n"
+            "\n"
+            f"多店铺:当前 SHOP_ID = {config.SHOP_ID}"
+            + (f" ({config.SHOP_NAME})" if config.SHOP_NAME else "") + "\n"
+            "  状态文件 / 指标历史 / 图片库都按 SHOP_ID 隔离。同一台机器跑多家店时,\n"
+            "  给每个 crontab 行设不同的 SHOP_ID 即可,数据互不可见:\n"
+            "    SHOP_ID=shop_us python3 main.py monitor\n"
+            "    SHOP_ID=shop_uk python3 main.py monitor\n"
+            "  SHOP_ID 由前端「店铺管理」页导出 .env 时一并给出。"
         )
     return 0
 
 
 def _images_cmd(args: list) -> int:
-    """图片库查看/人工筛选入口。只改索引，不偷偷删本地图片文件。"""
+    """
+    图片库查看/人工筛选入口。只改索引，不偷偷删本地图片文件。
+
+    用法: python main.py images [子命令] [--shop <SHOP_ID>]
+    --shop 缺省用 config.SHOP_ID（也就是环境变量 SHOP_ID），
+    所以既可以用环境变量（推荐，crontab 里一行一个店），
+    也可以临时指定一家店来查/改。
+    """
+    shop = None
+    if "--shop" in args:
+        i = args.index("--shop")
+        shop = args[i + 1] if i + 1 < len(args) else None
+        if not shop:
+            print("--shop 后面要跟店铺 id，例如：images stats --shop shop_us")
+            return 1
+        args = args[:i] + args[i + 2:]
+    shop_label = shop or config.SHOP_ID
+
     sub = args[0] if args else "stats"
     if sub == "stats":
-        print(json.dumps(image_library.stats(), ensure_ascii=False, indent=2))
+        print(json.dumps(image_library.stats(shop_id=shop), ensure_ascii=False, indent=2))
         return 0
     if sub == "list":
         gallery = args[1] if len(args) > 1 and args[1] != "-" else None
         style = args[2] if len(args) > 2 and args[2] != "-" else None
-        rows = image_library.list_assets(gallery, style)
+        rows = image_library.list_assets(gallery, style, shop_id=shop)
         if not rows:
-            print("图片库里还没有符合条件的资产。")
+            print(f"店铺 {shop_label} 的图片库里还没有符合条件的资产。")
             return 0
+        print(f"[店铺 {shop_label}]")
         print(f"{'id':>4}  {'gallery':<13} {'style':<15} {'subject':<28} 文件")
         for row in rows:
             print(f"{row['id']:>4}  {row['gallery']:<13} {row['style']:<15} "
@@ -576,34 +603,35 @@ def _images_cmd(args: list) -> int:
         return 0
     if sub == "mark":
         if len(args) < 3 or args[2] not in image_library.GALLERIES:
-            print("用法: python main.py images mark <id> hot|normal|unclassified [视觉锚点]")
+            print("用法: python main.py images mark <id> hot|normal|unclassified [视觉锚点] [--shop <SHOP_ID>]")
             return 1
         guidance = " ".join(args[3:]).strip() if len(args) > 3 else None
-        row = image_library.mark(int(args[1]), args[2], guidance)
+        row = image_library.mark(int(args[1]), args[2], guidance, shop_id=shop)
         if not row:
-            print(f"找不到图片资产 id={args[1]} 或图片库不可用。")
+            print(f"店铺 {shop_label} 下找不到图片资产 id={args[1]} 或图片库不可用。")
             return 1
         print(f"已标记 id={row['id']} -> {row['gallery']}"
               + (f"，风格反馈: {row['style_guidance']}" if row.get("style_guidance") else ""))
         return 0
     if sub == "feedback":
         if len(args) < 2:
-            print("用法: python main.py images feedback <style>")
+            print("用法: python main.py images feedback <style> [--shop <SHOP_ID>]")
             return 1
-        feedback = image_library.style_feedback(args[1])
+        feedback = image_library.style_feedback(args[1], shop_id=shop)
         if not feedback:
-            print(f"{args[1]} 的爆款样本不足 {config.IMAGE_HOT_MIN_SAMPLES} 张，暂不反哺风格。")
+            print(f"店铺 {shop_label} 的 {args[1]} 爆款样本不足 "
+                  f"{config.IMAGE_HOT_MIN_SAMPLES} 张，暂不反哺风格。")
         else:
             print(json.dumps(feedback, ensure_ascii=False, indent=2))
         return 0
     if sub == "delete":
         if len(args) < 2:
-            print("用法: python main.py images delete <id>")
+            print("用法: python main.py images delete <id> [--shop <SHOP_ID>]")
             return 1
-        if image_library.delete(int(args[1])):
-            print(f"已删除图片库索引 id={args[1]}，本地图片文件未删除。")
+        if image_library.delete(int(args[1]), shop_id=shop):
+            print(f"已删除店铺 {shop_label} 的图片库索引 id={args[1]}，本地图片文件未删除。")
             return 0
-        print(f"删除失败或找不到 id={args[1]}。")
+        print(f"删除失败或店铺 {shop_label} 下找不到 id={args[1]}。")
         return 1
     print(f"未知的 images 子命令: {sub}")
     return 1

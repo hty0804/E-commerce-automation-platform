@@ -61,6 +61,9 @@ class _HistoryCase(unittest.TestCase):
             p.start()
 
     def tearDown(self):
+        # 先关连接再撤 patch:连接是按线程缓存的,不关的话解释器退出时
+        # 会报 ResourceWarning: unclosed database(每个用例一个临时库,很容易攒一堆)。
+        history.close()
         for p in self._p:
             p.stop()
 
@@ -522,6 +525,84 @@ class TestBaselineSuppression(_HistoryCase):
 
         self.assertEqual(order, ["read", "write"],
                          "必须先查基线再写历史;反了就是自己跟自己比")
+
+
+class TestShopIsolation(_HistoryCase):
+    """多店铺(防关联多账号):指标历史必须按 shop_id 隔离。"""
+
+    def test_records_are_invisible_across_shops(self):
+        history.record("amazon", "orders", 30, shop_id="shop_a")
+        history.record("amazon", "orders", 30, shop_id="shop_b")
+        self.assertEqual(len(history.recent("amazon", "orders", shop_id="shop_a")), 1)
+        self.assertEqual(len(history.recent("amazon", "orders", shop_id="shop_b")), 1)
+        self.assertEqual(history.recent("amazon", "orders", shop_id="shop_c"), [])
+
+    def test_baseline_does_not_borrow_other_shop_samples(self):
+        """
+        A 店攒够样本、B 店一条没有 → B 店必须判"样本不足",不能拿 A 店的量顶上。
+        否则 B 店真跌了会被 A 店抬高的基线抑制掉 —— 静默漏报,而且看群里"很安静"。
+        """
+        now = time.time()
+        for i in range(1, 8):
+            history.record("amazon", "orders", 100, ts=_same_hour_ts(i, now), shop_id="shop_a")
+        base_a, n_a = history.baseline("amazon", "orders", ts=now,
+                                       match_dow=False, shop_id="shop_a")
+        self.assertIsNotNone(base_a)
+        self.assertEqual(n_a, 7)
+
+        base_b, n_b = history.baseline("amazon", "orders", ts=now,
+                                       match_dow=False, shop_id="shop_b")
+        self.assertIsNone(base_b, "B 店不该看到 A 店的历史")
+        self.assertEqual(n_b, 0)
+
+    def test_series_is_scoped(self):
+        history.record("amazon", "orders", 1, shop_id="shop_a")
+        history.record("amazon", "stock:S1", 2, shop_id="shop_b")
+        keys_a = [row[1] for row in history.series(shop_id="shop_a")]
+        keys_b = [row[1] for row in history.series(shop_id="shop_b")]
+        self.assertEqual(keys_a, ["orders"])
+        self.assertEqual(keys_b, ["stock:S1"])
+
+    def test_default_shop_follows_config(self):
+        with mock.patch.object(config, "SHOP_ID", "shop_cfg"):
+            history.record("amazon", "orders", 5)
+        self.assertEqual(len(history.recent("amazon", "orders", shop_id="shop_cfg")), 1)
+        self.assertEqual(history.recent("amazon", "orders", shop_id="default"), [])
+
+    def test_legacy_db_migrates_into_default_shop(self):
+        """
+        老库(没有 shop_id 列、索引不含 shop_id)必须原地升级:
+        老行全部归入 default 且不丢,索引重建为带 shop_id 的版本。
+        """
+        import sqlite3
+        path = os.path.join(self.tmp, "legacy.db")
+        with mock.patch.object(config, "HISTORY_DB", path):
+            history.close()
+            now = time.time()
+            moment = datetime.datetime.fromtimestamp(now)
+            conn = sqlite3.connect(path)
+            conn.executescript("""
+                CREATE TABLE metric_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    platform TEXT NOT NULL, key TEXT NOT NULL,
+                    ts REAL NOT NULL, hour INTEGER NOT NULL,
+                    dow INTEGER, value REAL NOT NULL);
+                CREATE INDEX idx_mh_series ON metric_history(platform, key, ts);
+            """)
+            conn.execute("INSERT INTO metric_history (platform,key,ts,hour,dow,value) "
+                         "VALUES ('amazon','orders',?,?,?,?)",
+                         (now, moment.hour, moment.weekday(), 42.0))
+            conn.commit()
+            conn.close()
+
+            rows = history.recent("amazon", "orders", shop_id="default")
+            self.assertEqual([v for _, v in rows], [42.0], "老数据必须归入 default 且不丢")
+
+            conn = sqlite3.connect(path)
+            cols = [r[2] for r in conn.execute("PRAGMA index_info(idx_mh_series)")]
+            conn.close()
+            self.assertIn("shop_id", cols, "老索引必须重建为带 shop_id 的版本")
+            history.close()
 
 
 if __name__ == "__main__":
