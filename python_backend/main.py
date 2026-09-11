@@ -560,7 +560,13 @@ def _main() -> int:
             "  给每个 crontab 行设不同的 SHOP_ID 即可,数据互不可见:\n"
             "    SHOP_ID=shop_us python3 main.py monitor\n"
             "    SHOP_ID=shop_uk python3 main.py monitor\n"
-            "  SHOP_ID 由前端「店铺管理」页导出 .env 时一并给出。"
+            "  SHOP_ID 由前端「店铺管理」页导出 .env 时一并给出。\n"
+            "\n"
+            "  ⚠️ 前端的默认主店 id 是 shop_default,而后端默认 SHOP_ID 是 default,\n"
+            "     两者**不是同一个**。在前端生成的图会存在 shop_default 名下,\n"
+            "     如果这里不带 SHOP_ID 就直接查,会看到「图片库是空的」—— 数据没丢,\n"
+            "     只是查错了店。用前端导出的 .env(它带 SHOP_ID=shop_default),\n"
+            "     或临时指定: python3 main.py images list --shop shop_default"
         )
     return 0
 

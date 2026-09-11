@@ -493,6 +493,12 @@ curl "http://127.0.0.1:8765/api/images/stats?shop_id=shop_us"
 python main.py images stats --shop shop_uk
 ```
 
+> **⚠️ 一个容易踩的坑：前端主店 id 是 `shop_default`，后端默认 `SHOP_ID` 是 `default`，两者不是同一个。**
+> 在前端生成的图存在 `shop_default` 名下；如果本地起后端时不带 `SHOP_ID` 就去查，
+> 会看到「图片库是空的」——**数据没丢，只是查错了店**。
+> 按上面的流程用前端导出的 `.env`（它带 `SHOP_ID=shop_default`）即可对齐，
+> 或临时指定：`python main.py images list --shop shop_default`。
+
 `SHOP_ID=default` 时状态文件保持老路径 `state.json`，已在跑的部署升级后
 能直接读到原有位点，不会因为换文件名就从「首次运行」重来。
 
