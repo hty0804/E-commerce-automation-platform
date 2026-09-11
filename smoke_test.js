@@ -82,6 +82,53 @@ ok('确实渲染出了内联 SVG 图标', /<svg class="ic-svg"/.test(allHtml));
      !new RegExp('>' + nm + '<').test(allHtml));
 });
 
+/* ---------- 回归：Listing 表单默认状态不能被日志筛选状态覆盖 ----------
+ * views.js 里曾经用同一个变量名 lf 同时表示「Listing 表单状态」和「日志筛选状态」。
+ * 同一个 IIFE 作用域里 var 重复声明不会报错，后者在模块加载时把前者整个覆盖掉 ——
+ * 于是 Listing 表单的 platform/category 默认值全丢，类目与平台下拉渲染不出 selected
+ * （实测各 0 个）。这条断言把"默认选中项必须存在"钉死。
+ */
+try {
+  const lh = V.listing.render();
+  const catBlock = (lh.match(/<select class="select" id="lgCategory">[\s\S]*?<\/select>/) || [''])[0];
+  const platBlock = (lh.match(/<select class="select" id="lgPlatform">[\s\S]*?<\/select>/) || [''])[0];
+  ok('Listing 类目下拉有且只有 1 个默认选中项',
+     (catBlock.match(/ selected/g) || []).length === 1);
+  ok('Listing 平台下拉有且只有 1 个默认选中项',
+     (platBlock.match(/ selected/g) || []).length === 1);
+} catch (e) { ok('Listing 默认选中项', false); console.log('  -> ' + e.message); }
+
+/* ---------- 回归：看板时间线的 class 必须与 style.css 一致 ----------
+ * style.css 定义的是 .tl / .tl-item（配合 .tl-dot/.tl-body/.tl-title/.tl-meta）。
+ * 视图层曾经输出 class="timeline" 且 <li> 不带类名 —— 容器和条目两个类都对不上，
+ * 列表退回浏览器默认样式（出现项目符号、不是 flex、圆点与文字错位）。
+ */
+try {
+  const dh = V.dashboard.render();
+  ok('看板时间线使用 .tl 容器', /<ul class="tl">/.test(dh));
+  ok('看板时间线条目使用 .tl-item', /<li class="tl-item">/.test(dh));
+  ok('看板不再出现未定义的 .timeline', !/class="timeline"/.test(dh));
+} catch (e) { ok('看板时间线 class', false); console.log('  -> ' + e.message); }
+
+/* ---------- 回归：「记住登录状态」勾选框必须真的生效 ----------
+ * 以前 login() 完全不看这个勾选框，勾不勾都写 localStorage ——
+ * 用户以为"不记住"能少留一份登录态，实际仍然长期驻留。
+ */
+try {
+  const LS = 'ecom_sop_session', SS = 'ecom_sop_session_tmp';
+  window.localStorage.removeItem(LS);
+  window.sessionStorage.removeItem(SS);
+
+  S.login('admin', 'admin123', false);            // 不勾「记住」
+  ok('不勾「记住」时不写 localStorage', !window.localStorage.getItem(LS));
+  ok('不勾「记住」时写 sessionStorage', !!window.sessionStorage.getItem(SS));
+  ok('不勾「记住」时仍能读到会话', !!S.session());
+
+  S.login('admin', 'admin123', true);             // 勾「记住」
+  ok('勾「记住」时写 localStorage', !!window.localStorage.getItem(LS));
+  ok('勾「记住」时清掉临时会话', !window.sessionStorage.getItem(SS));
+} catch (e) { ok('记住登录状态', false); console.log('  -> ' + e.message); }
+
 // v2 -> v3 migration (realistic seed: current v3 DB, downgraded to v2)
 try {
   const cur = S.get();

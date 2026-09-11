@@ -48,6 +48,25 @@ _CONTENT_TYPE_EXT = {
     "image/png": ".png",
     "image/webp": ".webp",
     "image/gif": ".gif",
+    # 下面这几种**魔数认不出来**(见 _MAGIC),只有响应头能定扩展名。
+    # 少了它们,服务端明明声明了类型,我们仍会兜底成 .jpg —— 扩展名与内容
+    # 不符,前端 <img> 按 jpeg 解码失败直接裂图。
+    "image/bmp": ".bmp",
+    "image/x-ms-bmp": ".bmp",
+    "image/tiff": ".tiff",
+    "image/avif": ".avif",
+}
+
+# 反向表:最终落盘扩展名 -> 对外汇报的 MIME。
+# 存在的意义是让 save_image() 返回的 content_type 有真值,而不是永远空串。
+_EXT_CONTENT_TYPE = {
+    ".jpg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".bmp": "image/bmp",
+    ".tiff": "image/tiff",
+    ".avif": "image/avif",
 }
 
 
@@ -79,17 +98,34 @@ def _ext(content_type: str, head: bytes) -> str:
     return ".jpg"   # 兜底:方舟默认输出 jpeg
 
 
-def _fetch(src: str) -> bytes:
+def _fetch(src: str) -> tuple:
     """
-    取回图片字节。支持两种来源:
+    取回图片字节 **以及服务端声明的 Content-Type**。
+
+    支持两种来源:
       - http(s) URL —— 方舟返回的就是这种
       - data URI   —— 接口配 response_format=b64_json 时我们拼出来的
+
+    为什么必须把 Content-Type 一起带回来(这是个真实的 bug):
+        文档和测试名都写着"扩展名看 Content-Type,看不出来再嗅探魔数",
+        但 _fetch 以前只 return bytes,响应头在函数里就被丢掉了 ——
+        于是 save_image 里 `_ext(meta.get("content_type") or "", ...)` 的
+        content_type 从来没人填,"看 Content-Type" 这条路径实际上是**死代码**,
+        一直靠魔数兜底。后果是:魔数认不出的格式(比如 AVIF、BMP)会被
+        按兜底的 .jpg 存下来 —— 扩展名与实际内容不符,前端 <img> 直接裂图。
+        更糟的是原测试只断言了 ".png",而 PNG 的魔数刚好也认得出来,
+        所以测试是"假通过",没人发现这条路径根本没生效。
+
+    返回 (data, content_type);data URI 的类型写在头部,也一并取出来。
     """
     if src.startswith("data:"):
         # data:image/png;base64,xxxx
-        _, _, payload = src.partition(",")
+        header, _, payload = src.partition(",")
         import base64
-        return base64.b64decode(payload)
+        declared = ""
+        if header.startswith("data:") and ";" in header:
+            declared = header[len("data:"):].split(";", 1)[0].strip()
+        return base64.b64decode(payload), declared
 
     if not src.startswith(("http://", "https://")):
         raise ValueError(f"不认识的来源: {src[:60]}")
@@ -98,6 +134,12 @@ def _fetch(src: str) -> bytes:
                         stream=True)
     if resp.status_code >= 400:
         raise RuntimeError(f"下载失败 HTTP {resp.status_code}")
+
+    # 取响应头里的类型。桩对象/异常实现可能没有 headers,取不到就当空。
+    try:
+        content_type = str((resp.headers or {}).get("Content-Type") or "")
+    except Exception:
+        content_type = ""
 
     max_bytes = int(getattr(config, "IMAGE_STORE_MAX_BYTES", 20 * 1024 * 1024))
     chunks: List[bytes] = []
@@ -110,7 +152,7 @@ def _fetch(src: str) -> bytes:
         if total > max_bytes:
             raise RuntimeError(f"图片超过上限 {max_bytes} 字节,已中止下载")
         chunks.append(chunk)
-    return b"".join(chunks)
+    return b"".join(chunks), content_type
 
 
 def _write(path: str, data: bytes) -> None:
@@ -129,7 +171,7 @@ def save_image(src: str, meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any
     **不抛异常** —— 失败写进 error,由调用方决定怎么处理。
     """
     try:
-        data = _fetch(src)
+        data, http_content_type = _fetch(src)
         if not data:
             raise RuntimeError("下载到空内容")
     except Exception as e:
@@ -140,7 +182,11 @@ def save_image(src: str, meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any
     digest = hashlib.sha256(data).hexdigest()
     meta = meta or {}
     prefix = _safe(str(meta.get("style") or "")) or "img"
-    ext = _ext(meta.get("content_type") or "", data[:12])
+    # 扩展名优先级:**响应头 Content-Type** > 调用方给的 meta > 文件头魔数。
+    # 响应头排第一,因为它是服务端对内容的权威声明,而 URL 后缀完全不可信
+    # (方舟给的 URL 常带 .jpg 后缀但内容是 png)。
+    ext = _ext(http_content_type or meta.get("content_type") or "", data[:12])
+    content_type = _EXT_CONTENT_TYPE.get(ext, "")
     name = f"{prefix}-{time.strftime('%Y%m%d')}-{digest[:12]}{ext}"
 
     try:
@@ -158,6 +204,7 @@ def save_image(src: str, meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any
             "source": source,
             "sha256": digest,
             "bytes": len(data),
+            "content_type": content_type,
             "saved_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         })
         with open(os.path.join(d, name + ".json"), "w", encoding="utf-8") as f:
@@ -173,7 +220,7 @@ def save_image(src: str, meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any
         "name": name,
         "bytes": len(data),
         "sha256": digest,
-        "content_type": "",
+        "content_type": content_type,
         "meta": dict(meta),
         "error": "",
     }

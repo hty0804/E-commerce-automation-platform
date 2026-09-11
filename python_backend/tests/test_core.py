@@ -306,6 +306,36 @@ class TestConfigRobust(Base):
         os.environ["_TEST_OK_INT"] = " 45 "
         self.assertEqual(config._int("_TEST_OK_INT", 60), 45)
 
+    def test_bool_empty_env_keeps_default(self):
+        """
+        空字符串必须按"用默认值"处理,不能当成 False。
+
+        以前 _bool 用的是 os.getenv(name, str(default)) —— os.getenv 的默认值
+        只在变量**不存在**时生效。.env 里写 `LISTING_SKIP_ON_ERROR=`(值留空)
+        会拿到空串 → 不在真值表里 → 返回 False,把默认开启的安全开关静默关掉,
+        校验不通过的 Listing 会照样上架,而日志里没有任何异常。
+        """
+        os.environ["_TEST_BOOL_EMPTY"] = ""
+        try:
+            self.assertTrue(config._bool("_TEST_BOOL_EMPTY", True),
+                            "空值把默认 True 的安全开关翻成了 False")
+            self.assertFalse(config._bool("_TEST_BOOL_EMPTY", False))
+            os.environ["_TEST_BOOL_EMPTY"] = "   "
+            self.assertTrue(config._bool("_TEST_BOOL_EMPTY", True), "纯空格同样要按默认值处理")
+        finally:
+            os.environ.pop("_TEST_BOOL_EMPTY", None)
+
+    def test_bool_values(self):
+        for raw, expected in (("true", True), ("TRUE", True), ("1", True),
+                              ("yes", True), ("on", True), ("false", False),
+                              ("0", False), ("no", False), ("off", False)):
+            os.environ["_TEST_BOOL_V"] = raw
+            try:
+                self.assertEqual(config._bool("_TEST_BOOL_V", True), expected,
+                                 f"{raw!r} 解析成了错误的值")
+            finally:
+                os.environ.pop("_TEST_BOOL_V", None)
+
     def test_state_file_is_absolute(self):
         self.assertTrue(os.path.isabs(config.STATE_FILE))
 

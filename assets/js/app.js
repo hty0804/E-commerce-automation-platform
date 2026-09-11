@@ -57,8 +57,11 @@
         e.preventDefault();
         var u = document.getElementById('username').value.trim();
         var p = pwd.value;
+        var rememberEl = document.getElementById('remember');
         var btn = document.getElementById('loginBtn');
-        var r = S.login(u, p);
+        // 「记住登录状态」必须真的传下去：不传的话勾选框就是个摆设，
+        // 用户以为不勾能少留一份登录态，实际仍然长期写在 localStorage 里。
+        var r = S.login(u, p, rememberEl ? rememberEl.checked : true);
         if (!r.ok) { U.toast('err', '登录失败', r.msg); return; }
         btn.disabled = true; btn.textContent = '登录中...';
         setTimeout(function () { App.enterApp(); }, 350);

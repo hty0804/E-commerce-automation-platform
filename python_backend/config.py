@@ -38,7 +38,25 @@ def _float(name: str, default: float) -> float:
 
 
 def _bool(name: str, default: bool = False) -> bool:
-    return os.getenv(name, str(default)).strip().lower() in ("1", "true", "yes", "on")
+    """
+    安全地读布尔环境变量。
+
+    空值必须按"用默认值"处理,不能按 False 处理 —— 这是个真实的坑:
+    以前写的是 os.getenv(name, str(default)),而 os.getenv 的默认值只在
+    **变量不存在**时生效;变量存在但值为空(.env 里写 `LISTING_SKIP_ON_ERROR=`
+    是很常见的写法)会拿到空串,空串不在真值表里 → 返回 False,
+    于是"默认开启"的安全开关被静默关掉了。
+
+    后果最严重的是 LISTING_SKIP_ON_ERROR:它的默认值是 True(校验有阻断级
+    问题时跳过上架),被空值翻成 False 后,校验不通过的 Listing 会**照样提交上架**,
+    而日志里不会有任何异常 —— 错误上架的清理成本远高于文案写错。
+
+    _int / _float 早就把"空值走默认"处理了,这里跟它们对齐。
+    """
+    raw = os.getenv(name)
+    if raw is None or str(raw).strip() == "":
+        return bool(default)
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
 
 
 # ------------------ 亚马逊 SP-API ------------------
@@ -82,7 +100,7 @@ STATE_FILE = os.getenv("STATE_FILE") or os.path.join(_HERE, "state.json")
 # ------------------ 大模型建议(可选,默认关闭) ------------------
 # 不配置 LLM_API_KEY 时完全不发起任何请求,告警照常发送(用内置规则建议)。
 # 注意:大模型只用于「生成建议」,不参与异常判定 —— 判定必须是确定性的。
-LLM_ENABLED = os.getenv("LLM_ENABLED", "false").lower() in ("1", "true", "yes")
+LLM_ENABLED = _bool("LLM_ENABLED")
 LLM_API_KEY = os.getenv("LLM_API_KEY")
 # 任何 OpenAI 兼容接口都可以(DeepSeek / 通义 / Moonshot / OpenAI 等)
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.deepseek.com/v1")

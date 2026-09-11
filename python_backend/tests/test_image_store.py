@@ -104,6 +104,30 @@ class TestSaveImage(unittest.TestCase):
             rec = image_store.save_image("https://ark.cn/x")
         self.assertTrue(rec["name"].endswith(".png"), rec["name"])
 
+    def test_content_type_is_used_when_magic_bytes_are_unknown(self):
+        """
+        BMP 的魔数不在 _MAGIC 表里,只有响应头能定扩展名。
+
+        这条用例是为了钉死一个真实 bug:旧实现的 _fetch() 只 return bytes,
+        把响应头丢了,于是 save_image 里"看 Content-Type"这条路径从来没生效,
+        一律兜底成 .jpg —— 扩展名和内容不符,前端按 jpeg 解码直接裂图。
+        旧代码在这里会得到 .jpg,所以本用例在修复前必然失败。
+        """
+        bmp = b"BM" + b"\x00" * 60          # 魔数 BM 不在 _MAGIC 里
+        with self._patch_get(bmp, content_type="image/bmp"):
+            rec = image_store.save_image("https://ark.cn/whatever.jpg")
+        self.assertTrue(rec["ok"], rec.get("error"))
+        self.assertTrue(rec["name"].endswith(".bmp"), rec["name"])
+        self.assertEqual(rec["content_type"], "image/bmp")
+
+    def test_data_uri_declared_type_is_honoured(self):
+        """data:image/bmp;base64,... 的类型写在头部,也不该被丢掉。"""
+        bmp = b"BM" + b"\x00" * 60
+        src = "data:image/bmp;base64," + base64.b64encode(bmp).decode()
+        rec = image_store.save_image(src)
+        self.assertTrue(rec["ok"], rec.get("error"))
+        self.assertTrue(rec["name"].endswith(".bmp"), rec["name"])
+
     def test_sidecar_records_where_it_came_from(self):
         """没有 sidecar,磁盘上就是一堆没来历的孤儿文件,没法做人工筛选。"""
         url = "https://ark.cn/origin.png"

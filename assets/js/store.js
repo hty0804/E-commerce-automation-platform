@@ -1104,18 +1104,59 @@
     set.gallery = gallery; set.status = gallery; set.updatedAt = now(); save(); return set;
   }
 
-  /* ---------------- 会话 ---------------- */
+  /* ---------------- 会话 ----------------
+   * 登录页有一个「记住登录状态」勾选框。以前 login() 完全不看它，
+   * 无论勾没勾都写 localStorage —— 也就是说这个勾选框是个摆设：
+   * 用户以为"不记住"能少留一份登录态，实际仍然长期驻留。
+   * 现在勾了就写 localStorage（关浏览器仍在），没勾只写 sessionStorage（关标签页即失效）。 */
   var SESSION_USER = { username: 'admin', password: 'admin123' };
-  function login(u, p) {
+  var SESSION_KEY_TEMP = 'ecom_sop_session_tmp';
+
+  function _store(kind) {
+    try {
+      return kind === 'local' ? global.localStorage : global.sessionStorage;
+    } catch (e) { return null; }
+  }
+  function _remove(kind, key) {
+    var s = _store(kind);
+    if (!s) return;
+    try { s.removeItem(key); } catch (e) { /* 隐私模式等场景下忽略 */ }
+  }
+
+  function login(u, p, remember) {
     if (u === SESSION_USER.username && p === SESSION_USER.password) {
-      localStorage.setItem(SESSION_KEY, JSON.stringify({ user: u, at: now() }));
+      var payload = JSON.stringify({ user: u, at: now() });
+      var keep = remember !== false;      // 默认保持旧行为（记住）
+      if (keep) {
+        _remove('session', SESSION_KEY_TEMP);
+        var ls = _store('local');
+        if (ls) { try { ls.setItem(SESSION_KEY, payload); } catch (e) { /* 写不进去也不能拦住登录 */ } }
+      } else {
+        _remove('local', SESSION_KEY);
+        var ss = _store('session');
+        if (ss) { try { ss.setItem(SESSION_KEY_TEMP, payload); } catch (e) { /* 同上 */ } }
+      }
       return { ok: true };
     }
     return { ok: false, msg: '账号或密码不正确（演示账号 admin / admin123）' };
   }
-  function logout() { localStorage.removeItem(SESSION_KEY); }
+  function logout() {
+    _remove('local', SESSION_KEY);
+    _remove('session', SESSION_KEY_TEMP);
+  }
   function session() {
-    try { return JSON.parse(localStorage.getItem(SESSION_KEY)); } catch (e) { return null; }
+    var ls = _store('local');
+    if (ls) {
+      try {
+        var s = JSON.parse(ls.getItem(SESSION_KEY) || 'null');
+        if (s) return s;
+      } catch (e) { /* 解析失败按未登录处理 */ }
+    }
+    var ss = _store('session');
+    if (ss) {
+      try { return JSON.parse(ss.getItem(SESSION_KEY_TEMP) || 'null'); } catch (e) { return null; }
+    }
+    return null;
   }
 
   /* ---------------- 导出 ---------------- */

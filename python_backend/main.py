@@ -542,16 +542,16 @@ def _main() -> int:
             "  python main.py genlist input.json     # 用大模型生成 Listing 并本地校验\n"
             "  python main.py genlist input.json pdd # 生成拼多多中文 Listing\n"
             "  python main.py history [子命令]       # 查看/清理指标历史库(基线用)\n"
+            "      series                            # 列出所有指标序列与样本数\n"
+            "      recent <platform> <key> [n]       # 看某个指标最近的取值\n"
+            "      baseline <platform> <key>         # 看该指标当前时段的基线值\n"
+            "      prune                             # 清理超过保留期的历史\n"
             "  python main.py images [子命令]        # 管理图片库与人工筛选\n"
             "      list [gallery] [style]             # 列出图片资产\n"
             "      mark <id> hot|normal|unclassified [视觉锚点] # 标爆款/普通并反馈风格\n"
             "      stats                             # 查看图库统计\n"
             "      feedback <style>                  # 查看爆款反哺提示\n"
-            "      delete <id>                       # 删除图库索引(不删图片文件)\n"
-            "      series                            # 列出所有指标序列与样本数\n"
-            "      recent <platform> <key> [n]       # 看某个指标最近的取值\n"
-            "      baseline <platform> <key>         # 看该指标当前时段的基线值\n"
-            "      prune                             # 清理超过保留期的历史"
+            "      delete <id>                       # 删除图库索引(不删图片文件)"
         )
     return 0
 

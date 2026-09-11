@@ -123,11 +123,14 @@
   function statLine(k, v) {
     return '<div class="stat-line"><span style="color:var(--text-2)">' + esc(k) + '</span><span class="v">' + esc(v) + '</span></div>';
   }
+  /* 注意 class 名：style.css 里定义的是 .tl / .tl-item（配合 .tl-dot/.tl-body/.tl-title），
+   * 以前这里写的是 class="timeline" 且 <li> 不带类名 —— 容器和条目两个类都对不上，
+   * 于是列表退回浏览器默认样式：出现项目符号、条目不是 flex、圆点与文字对不齐。 */
   function taskStatusList(tasks) {
     if (!tasks.length) return empty('暂无监控任务');
-    return '<ul class="timeline">' + tasks.map(function (t) {
+    return '<ul class="tl">' + tasks.map(function (t) {
       var color = t.status === 'warning' ? U.colors.orange : t.status === 'success' ? U.colors.green : '#c3cad8';
-      return '<li><span class="tl-dot" style="background:' + color + '"></span><div class="tl-body">' +
+      return '<li class="tl-item"><span class="tl-dot" style="background:' + color + '"></span><div class="tl-body">' +
         '<div class="tl-title">' + esc(t.name) + U.platformTag(t.platform) + U.metricTag(t.metric) + '</div>' +
         '<div class="tl-meta">每 ' + t.interval + ' 分钟 · 阈值 ' + Math.round(t.threshold * 100) + '% · ' +
         (t.enabled ? (t.lastRunAt ? '上次运行 ' + S.fromNow(t.lastRunAt) : '等待运行') : '已停用') + '</div>' +
@@ -137,9 +140,9 @@
   }
   function alertTimeline(list) {
     if (!list.length) return empty('暂无告警，一切正常');
-    return '<ul class="timeline">' + list.map(function (a) {
+    return '<ul class="tl">' + list.map(function (a) {
       var color = a.level === 'critical' ? U.colors.red : a.level === 'warning' ? U.colors.orange : U.colors.blue;
-      return '<li><span class="tl-dot" style="background:' + color + '"></span><div class="tl-body">' +
+      return '<li class="tl-item"><span class="tl-dot" style="background:' + color + '"></span><div class="tl-body">' +
         '<div class="tl-title">' + esc(a.title) + U.platformTag(a.platform) + U.levelTag(a.level) + '</div>' +
         '<div class="tl-msg">' + esc(a.message) + '</div>' +
         '<div class="tl-meta">' + S.fmtTime(a.createdAt) + ' · ' + (a.status === 'handled' ? '已处理' : '未处理') + '</div>' +
@@ -1020,22 +1023,29 @@
   /* ==========================================================
    * 6. 运行日志
    * ========================================================== */
-  var lf = { level: '', page: 1, size: 12 };
+  /* 运行日志的筛选状态。
+   * ⚠️ 变量名不能叫 lf：上面 Listing 视图的表单状态已经占了 lf。
+   * 同一个 IIFE 作用域里 `var lf` 写两次不会报错，后一次赋值会把前一次**整个覆盖掉** ——
+   * 于是 Listing 表单的默认值（platform/category/result…）在加载时就全丢了，
+   * 类目/平台下拉框渲染不出 selected（实测为 0 个），
+   * 而且只要哪天给日志状态加个 name/result 之类的字段，两个视图就会互相踩。
+   * 所以这里单独用一个名字。 */
+  var logf = { level: '', page: 1, size: 12 };
 
   var logs = {
     title: '运行日志', desc: '监控与上架任务执行记录',
     render: function () {
       var d = S.get();
-      var list = d.logs.filter(function (l) { return !lf.level || l.level === lf.level; });
+      var list = d.logs.filter(function (l) { return !logf.level || l.level === logf.level; });
       var total = list.length;
-      var pages = Math.max(1, Math.ceil(total / lf.size));
-      if (lf.page > pages) lf.page = pages;
-      var pageList = list.slice((lf.page - 1) * lf.size, lf.page * lf.size);
+      var pages = Math.max(1, Math.ceil(total / logf.size));
+      if (logf.page > pages) logf.page = pages;
+      var pageList = list.slice((logf.page - 1) * logf.size, logf.page * logf.size);
 
       var html = '<div class="card"><div class="filter-bar">' +
         '<select class="select" id="lLevel"><option value="">全部级别</option>' +
           ['info:信息', 'warn:警告', 'error:错误'].map(function (s) {
-            var kv = s.split(':'); return '<option value="' + kv[0] + '"' + (lf.level === kv[0] ? ' selected' : '') + '>' + kv[1] + '</option>';
+            var kv = s.split(':'); return '<option value="' + kv[0] + '"' + (logf.level === kv[0] ? ' selected' : '') + '>' + kv[1] + '</option>';
           }).join('') + '</select>' +
         '<div style="margin-left:auto;color:var(--text-2);font-size:13px">共 ' + total + ' 条，仅保留最近 300 条</div>' +
         '</div>';
@@ -1053,15 +1063,15 @@
               '<td data-label="模块"><span class="tag tag-gray">' + esc(l.module) + '</span></td>' +
               '<td data-label="内容" style="color:' + color + '">' + esc(l.message) + '</td></tr>';
           }).join('') + '</tbody></table></div>' +
-          '<div class="table-foot">' + pager(total, lf.page, lf.size, 'Views.logs.goPage') + '</div>';
+          '<div class="table-foot">' + pager(total, logf.page, logf.size, 'Views.logs.goPage') + '</div>';
       }
       html += '</div>';
       return html;
     },
     mount: function () {
-      var lv = $('#lLevel'); if (lv) lv.onchange = function () { lf.level = lv.value; lf.page = 1; App.refresh(); };
+      var lv = $('#lLevel'); if (lv) lv.onchange = function () { logf.level = lv.value; logf.page = 1; App.refresh(); };
     },
-    goPage: function (p) { lf.page = p; App.refresh(); }
+    goPage: function (p) { logf.page = p; App.refresh(); }
   };
 
   /* ==========================================================

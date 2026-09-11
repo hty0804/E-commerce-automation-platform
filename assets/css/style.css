@@ -8,6 +8,11 @@
   --muted: #9a93a4;
   --border: #eceef3;
   --border-2: #f1f3f7;
+  /* 下面两个变量曾经被 .image-asset-preview / .image-meta / .image-broken 引用，
+     但 :root 里从来没定义过 —— var() 解析失败会让整条声明失效（背景变透明、
+     文字颜色退回继承），而且不会报任何错，很难发现。 */
+  --bg-soft: #f7f8fb;
+  --text-3: #9a93a4;
   --primary: #fe2c55;
   --primary-soft: #ffe7ec;
   --primary-dark: #d81b53;
@@ -228,6 +233,30 @@ button, input, select, textarea { font-family: inherit; font-size: inherit; colo
 .card-head a.head-link { font-size: 12.5px; color: var(--primary); }
 .card-head a.head-link:hover { text-decoration: underline; }
 .card-body { padding: 18px; }
+
+/* ===== 工具条（各视图顶部的筛选 / 操作行）=====
+   .filter-bar 被商品/任务/告警/日志/图片库等 7 个视图使用，但样式表里一直没有它。
+   .input / .select 都是 width:100%，没有 flex 约束时每个控件都会独占一整行，
+   工具条会退化成"竖排全宽控件"—— 搜索框、下拉、按钮全部上下堆叠。 */
+.filter-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 14px 18px; border-bottom: 1px solid var(--border);
+}
+.filter-bar:last-child { border-bottom: 0; }
+/* 吃掉剩余宽度（搜索框用）。原来的 .grow 没有任何定义，等于没写。 */
+.grow { flex: 1 1 220px; min-width: 0; width: auto; }
+.filter-bar .select { width: auto; min-width: 132px; }
+.filter-bar .input { width: auto; min-width: 160px; }
+.filter-bar .btn { flex: none; }
+
+/* ===== 标签行（看板 / 设置里的「名称 —— 值 / 开关」）=====
+   视图层一直在用 .stat-line（内含 .v），CSS 里没有 → 名称和值/开关会贴在一起，
+   看不出左右对应关系。 */
+.stat-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 0; }
+.stat-line .v { font-weight: 600; }
+
+/* 图表容器（给折线图留出统一的上下留白，避免贴边） */
+.chart-box { padding: 4px 2px 0; }
 .grid { display: grid; gap: 16px; }
 .grid-4 { grid-template-columns: repeat(4, 1fr); }
 .grid-3 { grid-template-columns: repeat(3, 1fr); }
@@ -293,6 +322,15 @@ table.tbl .cell-main { font-weight: 500; }
 .mock-style input { margin-top:3px; accent-color:var(--primary); }
 .mock-style b,.mock-style small { display:block; }
 .mock-style small { color:var(--text-2); margin-top:4px; }
+/* Mock 生图弹窗里的「风格已锁定」提示条（视图层在用，样式表里缺定义） */
+.mock-lock {
+  margin-top:14px; padding:11px 13px; border-radius:8px;
+  background:var(--success-soft); color:#0f7a51; font-size:12.6px;
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+}
+.mock-lock b { display:inline-flex; align-items:center; gap:5px; }
+.mock-lock span { color:var(--text-2); }
+.mock-image-modal .hint { margin-bottom:14px; }
 .image-asset-card { overflow:hidden; min-width:0; }
 .image-asset-preview { height:180px; background:var(--bg-soft); display:flex; align-items:center; justify-content:center; overflow:hidden; }
 .image-asset-preview img { width:100%; height:100%; object-fit:cover; display:block; }
@@ -372,6 +410,9 @@ input:checked + .slider:before { transform: translateX(18px); }
 .tl-body { flex: 1; min-width: 0; }
 .tl-title { font-size: 13px; font-weight: 500; }
 .tl-meta { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+/* 告警时间线里的正文。视图层一直在用 .tl-msg，但这里漏了它，
+   消息文本会跟标题同字号同颜色，整条时间线看不出层次。 */
+.tl-msg { font-size: 12.6px; color: var(--text-2); margin-top: 4px; line-height: 1.6; }
 
 /* ===== 通用 ===== */
 .code-block {
@@ -379,6 +420,12 @@ input:checked + .slider:before { transform: translateX(18px); }
   font-family: Consolas, Monaco, monospace; font-size: 12.5px; line-height: 1.65;
   overflow-x: auto; white-space: pre;
 }
+/* 代码块里的语法着色标记（c=注释 / k=关键字 / g=字符串）。
+   视图层的代码示例里一直在用这三个 class，但样式表里没有对应规则，
+   所有 token 都是同一个颜色 —— 代码示例等于没有高亮。 */
+.code-block .c { color: #7f8ea3; }
+.code-block .k { color: #ff8ab5; }
+.code-block .g { color: #86e0b0; }
 .progress { height: 6px; background: #eef0f4; border-radius: 3px; overflow: hidden; }
 .progress > i { display: block; height: 100%; background: var(--primary); border-radius: 3px; }
 
